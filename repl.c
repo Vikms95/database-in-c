@@ -351,26 +351,28 @@ MetaCommandResult do_meta_command(InputBuffer *input_buffer, Table *table)
     }
 }
 
+/* Splits the insert statement . Returns a value of the prepare enum. */
 PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement)
 {
     statement->type = STATEMENT_INSERT;
 
     // Separate buffer on whitespace
-    char *keyword = strtok(input_buffer->buffer, " ");
-    char *id_string = strtok(NULL, " ");
-    char *username = strtok(NULL, " ");
-    char *email = strtok(NULL, " ");
+    char *delimiter = " ";
+
+    // Note on strtok: https://cplusplus.com/reference/cstring/strtok/
+    // "strtok" maintains a static pointer within the function to keep track of where it left off in the string,
+    //  allowing it to continue scanning from the end of the last token on subsequent calls.
+    char *keyword = strtok(input_buffer->buffer, delimiter);
+    char *id_string = strtok(NULL, delimiter);
+    char *username = strtok(NULL, delimiter);
+    char *email = strtok(NULL, delimiter);
 
     if (id_string == NULL || username == NULL || email == NULL)
     {
         return PREPARE_SYNTAX_ERROR;
     }
 
-    if (strlen(username) > COLUMN_USERNAME_SIZE)
-    {
-        return PREPARE_STRING_TOO_LONG;
-    }
-    if (strlen(email) > COLUMN_EMAIL_SIZE)
+    if (strlen(username) > COLUMN_USERNAME_SIZE || strlen(email) > COLUMN_EMAIL_SIZE)
     {
         return PREPARE_STRING_TOO_LONG;
     }
@@ -382,17 +384,30 @@ PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement)
         return PREPARE_NEGATIVE_ID;
     }
 
+    // Create the Row struct row_to_insert property within the Statement struct and add the id property
     statement->row_to_insert.id = id;
+
+    // Note on copying strings compared to integers in C:
+    // What would be talked about as "string" in C is just an array of characters stored contiguously in memory,
+    // with a pointer to the first character and a NULL at the end to determine the end of the "string".
+    // (note that this is not exactly infer that string are a linked lists, since linked lists do not imply a
+    // contiguous memory allocation for every next character)
+
+    // When you assign a string to another string, you can't simply copy the base address of the array
+    // because this would only copy the reference to the first character of the string (i.e., the pointer),
+    // not the actual characters of the string.
     strcpy(statement->row_to_insert.username, username);
     strcpy(statement->row_to_insert.email, email);
 
     return PREPARE_SUCCESS;
 }
 
+/* Executes certain actions based on the input buffer passed in. Returns a value from
+the prepare enum */
 PrepareResult prepare_statement(InputBuffer *input_buffer, Statement *statement)
 {
-    /* tries to match 6 characters of the buffer, since insert will be followed
-     by more data afterwards the keyword*/
+    // tries to match 6 characters of the buffer, since insert will be followed
+    //  by more data afterwards the keyword
     if (strncmp(input_buffer->buffer, "insert", 6) == 0)
     {
         return prepare_insert(input_buffer, statement);
