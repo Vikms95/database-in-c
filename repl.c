@@ -4,8 +4,8 @@
 // pointer_address->value = NULL - usually always used with NULL, since it modifies where the pointer is pointing, the pointer address
 // and it is weird you would do pointer->value = 0x38287832
 
-// creating memory for variable and pointer is done with "malloc"
-// freeing memory for variable and pointer id done with free(pointer_address)
+// QUESTION:
+// do not understand why sometimes values (like Statement on main function) are being passed as &statement as sometimes without &
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -253,7 +253,7 @@ void db_close(Table *table)
 
 /* Compute the memory address of a row within a table. We return a pointer
 to an undetermined data type (void*) */
-void *row_slot(Table *table, uint32_t row_num)
+void *get_row_slot(Table *table, uint32_t row_num)
 {
     // Determine in which page the row is located
     // row_num = 203
@@ -406,8 +406,8 @@ PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement)
 the prepare enum */
 PrepareResult prepare_statement(InputBuffer *input_buffer, Statement *statement)
 {
-    // tries to match 6 characters of the buffer, since insert will be followed
-    //  by more data afterwards the keyword
+    // Tries to match 6 characters of the buffer, since insert will be followed
+    // by more data afterwards the keyword
     if (strncmp(input_buffer->buffer, "insert", 6) == 0)
     {
         return prepare_insert(input_buffer, statement);
@@ -429,8 +429,8 @@ ExecuteResult execute_insert(Statement *statement, Table *table)
     }
 
     Row *row_to_insert = &(statement->row_to_insert);
-
-    serialize_row(row_to_insert, row_slot(table, table->num_rows));
+    void *row_slot = get_row_slot(table, table->num_rows);
+    serialize_row(row_to_insert, row_slot);
     table->num_rows += 1;
     return EXECUTE_SUCCESS;
 }
@@ -441,13 +441,16 @@ ExecuteResult execute_select(Statement *statement, Table *table)
     for (uint32_t i = 0; i < table->num_rows; i++)
     {
         {
-            deserialize_row(row_slot(table, i), &row);
+            void *row_slot = get_row_slot(table, i);
+            deserialize_row(row_slot, &row);
             print_row(&row);
         }
     }
     return EXECUTE_SUCCESS;
 }
 
+/* Switch statement that executes functions based on the statement type. Each function makes
+this function return a value from the ExecuteResult */
 ExecuteResult execute_statement(Statement *statement, Table *table)
 {
     switch (statement->type)
