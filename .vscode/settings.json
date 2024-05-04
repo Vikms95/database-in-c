@@ -8,5 +8,82 @@
         "memory": "c",
         "new": "c",
         "functional": "c"
+    },
+    "editor.tokenColorCustomizations": {
+        "textMateRules": [
+            {
+                "scope": "meta.type.annotation",
+                "settings": {
+                    "fontStyle": "italic"
+                }
+            },
+            {
+                "scope": "html-template.ng.interpolation.begin",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "html-template.ng.interpolation.end",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "html-template.ng.attributes.animationtrigger.prefix",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "punctuation.definition.ng-binding-name.begin.html",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "punctuation.definition.ng-binding-name.end.html",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "html-template.ng.attributes.prefix.ref",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "html-template.ng.attributes.prefix.sugar",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "html-template.ng.attributes.template.prefix",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "html-template.ng.tag.colon",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "html-template.ng.attributes.colon",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            },
+            {
+                "scope": "html-template.ng.occurrence.dtd",
+                "settings": {
+                    "foreground": "#A0A0A0"
+                }
+            }
+        ],
+        "comments": ""
     }
 }

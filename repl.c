@@ -110,7 +110,9 @@ const uint32_t PAGE_SIZE = 4096;
 const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
 const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 
-// Retrieves or creates a new page within the pager.
+/*
+ *Retrieves or creates a new page within the pager
+ */
 void *get_page(Pager *pager, uint32_t page_num)
 {
     // If we are trying to get or allocate a number maximum to the allowed max size, error out.
@@ -128,15 +130,26 @@ void *get_page(Pager *pager, uint32_t page_num)
         void *page = malloc(PAGE_SIZE);
         uint32_t total_num_pages = pager->file_length / PAGE_SIZE;
 
-        // We might save a partial page at the end of the file. Check if there is a remainder.
+        // If there is a remainder, there is an extra page being used in the file
+        // but since it is not completed, we would not be counting it on the total_num_pages variable
         if (pager->file_length % PAGE_SIZE)
         {
             total_num_pages += 1;
         }
 
+        // If the page we want to retrieve is not out of bounds of the total amount of pages there is
         if (page_num <= total_num_pages)
         {
-            lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
+            // This sets the file to start at the correct offset
+            // (at the beggining of the desired page) for the next read operation
+            off_t offset = lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
+
+            if (offset == -1)
+            {
+                printf("Error seeking file: %d\n", errno);
+                exit(EXIT_FAILURE);
+            }
+
             ssize_t bytes_read = read(pager->file_descriptor, page, PAGE_SIZE);
 
             if (bytes_read == -1)
@@ -146,13 +159,16 @@ void *get_page(Pager *pager, uint32_t page_num)
             }
         }
 
+        // Add the created page to the pager reference
         pager->pages[page_num] = page;
     }
     // Finally, the function returns the address of the page in memory, making it available for the calling function to use.
     return pager->pages[page_num];
 }
 
-/* Gets the offset of the page within the table and writes it back to disk to be able to persist the data and ensure durability.*/
+/*
+ *Gets the offset of the page within the table and writes it back to disk to be able to persist the data and ensure durability.
+ */
 void pager_flush(Pager *pager, uint32_t page_num, uint32_t size)
 {
     // Although this has been checked before, double checking that the page is not NULL
@@ -184,14 +200,18 @@ void pager_flush(Pager *pager, uint32_t page_num, uint32_t size)
     }
 }
 
-/* Unblock memory used by the page and reset it to NULL.*/
+/*
+ *Unblock memory used by the page and reset it to NULL.
+ */
 void free_page(Pager *pager, uint32_t page_num)
 {
     free(pager->pages[page_num]);
     pager->pages[page_num] = NULL;
 }
 
-/* Closes the database, ensuring all data is flushed to disk and all resources are freed. */
+/*
+ *Closes the database, ensuring all data is flushed to disk and all resources are freed.
+ */
 void db_close(Table *table)
 {
     // Access the pager reference stored within the table struct.
@@ -251,9 +271,11 @@ void db_close(Table *table)
     free(table);
 }
 
-/* Compute the memory address of a row within a table. We return a pointer
-to an undetermined data type (void*) */
-void *get_row_slot(Table *table, uint32_t row_num)
+/*
+ * Compute the memory address of a row within a table. We return a pointer
+ * to an undetermined data type (void*)
+ */
+void *get_row_offset_on_page(Table *table, uint32_t row_num)
 {
     // Determine in which page the row is located
     // row_num = 203
@@ -270,7 +292,9 @@ void *get_row_slot(Table *table, uint32_t row_num)
     return page + byte_offset;
 }
 
-/* Creates an instance listening to the REPL input. Returns an InputBuffer struct */
+/*
+ *Creates an instance listening to the REPL input. Returns an InputBuffer struct
+ */
 InputBuffer *new_input_buffer()
 {
     // Create input_buffer and allocate memory based on the size of the members
@@ -286,7 +310,9 @@ InputBuffer *new_input_buffer()
     return input_buffer;
 }
 
-/* Creates a pager instance based on a passed filename char. Returns a Pager struct */
+/*
+ *Creates a pager instance based on a passed filename char. Returns a Pager struct
+ */
 Pager *pager_open(const char *filename)
 {
     // Open the file for reading and writting
@@ -318,8 +344,10 @@ Pager *pager_open(const char *filename)
     return pager;
 }
 
-/* Initialized the database by instantiating a pager and a single table (for now).
-   Later give a reference of the pager to the table itself. Returns a Table struct */
+/*
+ *Initialized the database by instantiating a pager and a single table (for now).
+ *Later give a reference of the pager to the table itself. Returns a Table struct
+ */
 Table *db_open(const char *filename)
 {
     Pager *pager = pager_open(filename);
@@ -335,8 +363,10 @@ Table *db_open(const char *filename)
     table->num_rows = num_rows;
 }
 
-/* If the buffer started with a '.', execute one of the following meta commands. Returns
-a value of the META_COMMAND enum to indicate the switch statement on the upper level on how to proceed.  */
+/*
+ * If the buffer started with a '.', execute one of the following meta commands. Returns
+ * a value of the META_COMMAND enum to indicate the switch statement on the upper level on how to proceed.
+ */
 MetaCommandResult do_meta_command(InputBuffer *input_buffer, Table *table)
 {
     // If the value is found, 'strcmp' returns a 0.
@@ -351,7 +381,9 @@ MetaCommandResult do_meta_command(InputBuffer *input_buffer, Table *table)
     }
 }
 
-/* Splits the insert statement . Returns a value of the prepare enum. */
+/*
+ *Splits the insert statement . Returns a value of the prepare enum.
+ */
 PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement)
 {
     statement->type = STATEMENT_INSERT;
@@ -402,8 +434,10 @@ PrepareResult prepare_insert(InputBuffer *input_buffer, Statement *statement)
     return PREPARE_SUCCESS;
 }
 
-/* Executes certain actions based on the input buffer passed in. Returns a value from
-the prepare enum */
+/*
+ * Executes certain actions based on the input buffer passed in. Returns a value from
+ * the prepare enum
+ */
 PrepareResult prepare_statement(InputBuffer *input_buffer, Statement *statement)
 {
     // Tries to match 6 characters of the buffer, since insert will be followed
@@ -429,8 +463,13 @@ ExecuteResult execute_insert(Statement *statement, Table *table)
     }
 
     Row *row_to_insert = &(statement->row_to_insert);
-    void *row_slot = get_row_slot(table, table->num_rows);
-    serialize_row(row_to_insert, row_slot);
+    // This is the memory address, taken from getting the page
+    // memory address + its size in bits, thus giving the exact memory address
+    // where the row is located
+    void *row_offset_on_page = get_row_offset_on_page(table, table->num_rows);
+
+    // Serialize the row(convert into a linear bite array). Copy the row data on the required memory offset
+    serialize_row(row_to_insert, row_offset_on_page);
     table->num_rows += 1;
     return EXECUTE_SUCCESS;
 }
@@ -441,16 +480,23 @@ ExecuteResult execute_select(Statement *statement, Table *table)
     for (uint32_t i = 0; i < table->num_rows; i++)
     {
         {
-            void *row_slot = get_row_slot(table, i);
-            deserialize_row(row_slot, &row);
+            // This is the memory address, taken from getting the page
+            // memory address + its size in bits, thus giving the exact memory address
+            // where the row is located
+            void *row_offset_on_page = get_row_offset_on_page(table, i);
+
+            // Deserialize the row (convert a linear bite array into structured data). Copy the row data on the required memory offset
+            deserialize_row(row_offset_on_page, &row);
             print_row(&row);
         }
     }
     return EXECUTE_SUCCESS;
 }
 
-/* Switch statement that executes functions based on the statement type. Each function makes
-this function return a value from the ExecuteResult */
+/*
+ * Switch statement that executes functions based on the statement type. Each function makes
+ * this function return a value from the ExecuteResult
+ */
 ExecuteResult execute_statement(Statement *statement, Table *table)
 {
     switch (statement->type)
@@ -462,7 +508,9 @@ ExecuteResult execute_statement(Statement *statement, Table *table)
     }
 }
 
-/* Reads standard CLI I/O to assign rthe necessary length of the buffer to the input_buffer object  */
+/*
+ * Reads standard CLI I/O to assign rthe necessary length of the buffer to the input_buffer object
+ */
 void read_input(InputBuffer *input_buffer)
 {
     ssize_t bytes_read =
@@ -499,18 +547,42 @@ void print_row(Row *row)
     printf("(%d, %s, %s)\n", row->id, row->username, row->email);
 }
 
-void serialize_row(Row *source, void *destination)
+/*
+ * Serializes a Row structure into a flat byte array.
+ *
+ * This function is used to convert the structured data within a Row structure
+ * into a contiguous block of memory (byte array). This is useful for storing
+ * the data in a format that can be written directly to disk or sent over a network.
+ *
+ * Parameters:
+ *   source - Pointer to the Row structure to serialize.
+ *   destination - Pointer to the buffer where the serialized data should be stored.
+ */
+void serialize_row(Row *row_source, void *destination)
 {
-    memcpy(destination + ID_OFFSET, &(source->id), ID_SIZE);
-    memcpy(destination + USERNAME_OFFSET, &(source->username), USERNAME_SIZE);
-    memcpy(destination + EMAIL_OFFSET, &(source->email), EMAIL_SIZE);
+    // Copy the ID field from the Row structure to the destination array at the specified ID_OFFSET.
+    memcpy(destination + ID_OFFSET, &(row_source->id), ID_SIZE);
+    memcpy(destination + USERNAME_OFFSET, &(row_source->username), USERNAME_SIZE);
+    memcpy(destination + EMAIL_OFFSET, &(row_source->email), EMAIL_SIZE);
 }
 
-void deserialize_row(void *source, Row *destination)
+/*
+ * Deserializes a flat byte array into a Row structure.
+ *
+ * This function is used to convert a contiguous block of memory (byte array)
+ * back into a structured Row format. This is useful for loading data from disk
+ * or network into a structured format that the application can manipulate.
+ *
+ *  Parameters:
+ *   source - Pointer to the buffer containing serialized data.
+ *   destination - Pointer to the Row structure where the deserialized data should be stored.
+ */
+void deserialize_row(void *row_source, Row *destination)
 {
-    memcpy(&(destination->id), source + ID_OFFSET, ID_SIZE);
-    memcpy(&(destination->username), source + USERNAME_OFFSET, USERNAME_SIZE);
-    memcpy(&(destination->email), source + EMAIL_OFFSET, EMAIL_SIZE);
+    // Copy the ID field from the source array at the specified ID_OFFSET into the Row structure's ID field.
+    memcpy(&(destination->id), row_source + ID_OFFSET, ID_SIZE);
+    memcpy(&(destination->username), row_source + USERNAME_OFFSET, USERNAME_SIZE);
+    memcpy(&(destination->email), row_source + EMAIL_OFFSET, EMAIL_SIZE);
 }
 
 int main(int argc, char *argv[])
