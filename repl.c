@@ -152,15 +152,20 @@ void *get_page(Pager *pager, uint32_t page_num)
     return pager->pages[page_num];
 }
 
-// Writes the content of a page back to the disk.
+/* Gets the offset of the page within the table and writes it back to disk to be able to persist the data and ensure durability.*/
 void pager_flush(Pager *pager, uint32_t page_num, uint32_t size)
 {
+    // Although this has been checked before, double checking that the page is not NULL
+    // or we could incur to a segmentation fault
     if (pager->pages[page_num] == NULL)
     {
         printf("Tried to flush null page\n");
         exit(EXIT_FAILURE);
     }
 
+    // Get the reference of reading the file, the number of the page times it size and
+    // from the beggining of the page. We do page_num * PAGE_SIZE to skip the amount a
+    // page occupies a certain amount of times.
     off_t offset = lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
 
     if (offset == -1)
@@ -169,6 +174,7 @@ void pager_flush(Pager *pager, uint32_t page_num, uint32_t size)
         exit(EXIT_FAILURE);
     }
 
+    // Persist data to the file_descriptor reference
     ssize_t bytes_written = write(pager->file_descriptor, pager->pages[page_num], size);
 
     if (bytes_written == -1)
@@ -178,12 +184,22 @@ void pager_flush(Pager *pager, uint32_t page_num, uint32_t size)
     }
 }
 
-// Closes the database, ensuring all data is flushed to disk and all resources are freed.
+/* Unblock memory used by the page and reset it to NULL.*/
+void free_page(Pager *pager, uint32_t page_num)
+{
+    free(pager->pages[page_num]);
+    pager->pages[page_num] = NULL;
+}
+
+/* Closes the database, ensuring all data is flushed to disk and all resources are freed. */
 void db_close(Table *table)
 {
+    // Access the pager reference stored within the table struct.
     Pager *pager = table->pager;
+    // This only accounts for fully written pages, partially written are handled after the loop
     uint32_t num_full_pages = table->num_rows / ROWS_PER_PAGE;
 
+    // Empty whatever reference the database might have
     for (uint32_t i = 0; i < num_full_pages; i++)
     {
         if (pager->pages[i] == NULL)
@@ -192,21 +208,26 @@ void db_close(Table *table)
         }
 
         pager_flush(pager, i, PAGE_SIZE);
-        free(pager->pages[i]);
-        pager->pages[i] = NULL;
+        free_page(pager, i);
     }
 
-    // There may be a partial page to write to the end of the file
-    // This should not be needed with a B-Tree
+    // If there is a remainder, there might be a page which is not completely filled
+    // up after the maximum amount of rows per page
     uint32_t num_additional_rows = table->num_rows % ROWS_PER_PAGE;
     if (num_additional_rows > 0)
     {
+        // The amount of pages is used as the index of the last row within the page
         uint32_t page_num = num_full_pages;
         pager_flush(pager, page_num, num_additional_rows * ROW_SIZE);
-        free(pager->pages[page_num]);
-        pager->pages[page_num] = NULL;
+        free_page(pager, page_num);
     }
 
+    // Close the df opened on program startup. Not closing a file descriptor properly
+    // can lead to data not being written as expected, leading to data loss or corruption or
+    // surpassing the amount of file descriptors the OS can handle at once.
+    // The OS would close the file descriptor if the program ends, but relying on this
+    // automatic process is not recomended. There could also be unhandled error during the closing
+    // process, which would not handled correctly if the OS closes the files descriptor.
     int result = close(pager->file_descriptor);
     if (result == -1)
     {
@@ -214,6 +235,8 @@ void db_close(Table *table)
         exit(EXIT_FAILURE);
     }
 
+    // Safety net in case any pages are left unfreed via TABLE_MAX_PAGES
+    // variable, which makes sure that scans all the posible pages within the table.
     for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++)
     {
         void *page = pager->pages[i];
@@ -247,7 +270,7 @@ void *row_slot(Table *table, uint32_t row_num)
     return page + byte_offset;
 }
 
-/* Creates an instance listening to the REPL input */
+/* Creates an instance listening to the REPL input. Returns an InputBuffer struct */
 InputBuffer *new_input_buffer()
 {
     // Create input_buffer and allocate memory based on the size of the members
@@ -263,7 +286,7 @@ InputBuffer *new_input_buffer()
     return input_buffer;
 }
 
-/* Creates a pager instance based on a passed filename char */
+/* Creates a pager instance based on a passed filename char. Returns a Pager struct */
 Pager *pager_open(const char *filename)
 {
     // Open the file for reading and writting
@@ -296,7 +319,7 @@ Pager *pager_open(const char *filename)
 }
 
 /* Initialized the database by instantiating a pager and a single table (for now).
-   Later give a reference of the pager to the table itself. */
+   Later give a reference of the pager to the table itself. Returns a Table struct */
 Table *db_open(const char *filename)
 {
     Pager *pager = pager_open(filename);
@@ -312,8 +335,11 @@ Table *db_open(const char *filename)
     table->num_rows = num_rows;
 }
 
+/* If the buffer started with a '.', execute one of the following meta commands. Returns
+a value of the META_COMMAND enum to indicate the switch statement on the upper level on how to proceed.  */
 MetaCommandResult do_meta_command(InputBuffer *input_buffer, Table *table)
 {
+    // If the value is found, 'strcmp' returns a 0.
     if (strcmp(input_buffer->buffer, ".exit") == 0)
     {
         db_close(table);
@@ -418,10 +444,11 @@ ExecuteResult execute_statement(Statement *statement, Table *table)
     }
 }
 
+/* Reads standard CLI I/O to assign rthe necessary length of the buffer to the input_buffer object  */
 void read_input(InputBuffer *input_buffer)
 {
     ssize_t bytes_read =
-        getline(
+        getline(                            // Stdio C function to read data
             &(input_buffer->buffer),        // Pointer to buffer where the read line will be stored
             &(input_buffer->buffer_length), // Pointer to variable that hold the size of the buffer
             stdin                           // The input stream to read from (cli stdin)
@@ -434,9 +461,10 @@ void read_input(InputBuffer *input_buffer)
         exit(EXIT_FAILURE);
     }
 
-    // Assign number of bytes read to input_length and ignore trailing newline (\n)(substract 1)
-    int buffer_to_assign = bytes_read - 1;
+    // Assign number of bytes read to input_length
+    int buffer_to_assign = bytes_read - 1; // Ignore trailing newline (\n)(substract 1)
     input_buffer->input_length = buffer_to_assign;
+    // Go up until wherever the buffer would reach and assign it to 0.
     input_buffer->buffer[buffer_to_assign] = 0;
 }
 
@@ -501,6 +529,7 @@ int main(int argc, char *argv[])
 
         Statement statement;
         PrepareResult prepare_result = prepare_statement(input_buffer, &statement);
+
         switch (prepare_result)
         {
         case (PREPARE_SUCCESS):
@@ -521,6 +550,7 @@ int main(int argc, char *argv[])
         }
 
         ExecuteResult execute_result = execute_statement(&statement, table);
+
         switch (execute_result)
         {
         case (EXECUTE_SUCCESS):
