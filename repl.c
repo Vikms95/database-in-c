@@ -6,6 +6,7 @@
 
 // QUESTION:
 // do not understand why sometimes values (like Statement on main function) are being passed as &statement as sometimes without &
+// difference between variable->value.id and variable.value or variable->value.value
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -87,8 +88,15 @@ typedef struct
 typedef struct
 {
     uint32_t num_rows;
-    Pager *pager;
+    Pager *pager; // Refence to the general pager. This is done to avoid passing down the pager as parameters.
 } Table;
+
+typedef struct
+{
+    Table *table; // Reference to the table its part of. This is done to avoid passing down the table as parameters.
+    uint32_t row_num;
+    bool end_of_table; // Indicates a position one past the last element
+} Cursor;
 
 // This macro calculates the size of a specific attribute within a structure.
 // It uses the sizeof operator to determine the size in bytes of the attribute of a struct.
@@ -109,6 +117,34 @@ const uint32_t ROW_SIZE = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
 const uint32_t PAGE_SIZE = 4096;
 const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
 const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
+
+/*
+ * Creates a cursor at the starting point of the table.
+ */
+Cursor *get_start_of_table_cursor(Table *table)
+{
+    Cursor *cursor = malloc(sizeof(Cursor));
+    cursor->table = table;
+    cursor->row_num = 0;
+    // The boolean would be true if the table had no rows,
+    // because the position 0 would be already the end of the table
+    cursor->end_of_table = (table->num_rows == 0);
+    return cursor;
+}
+
+/*
+ * Creates a cursor at the end of the table.
+ */
+Cursor *get_end_of_table_cursor(Table *table)
+{
+    Cursor *cursor = malloc(sizeof(Cursor));
+    cursor->table = table;
+    cursor->row_num = table->num_rows;
+    // The boolean would be true if the table had no rows,
+    // because the position 0 would be already the end of the table
+    cursor->end_of_table = true;
+    return cursor;
+}
 
 /*
  *Retrieves or creates a new page within the pager
@@ -275,14 +311,15 @@ void db_close(Table *table)
  * Compute the memory address of a row within a table. We return a pointer
  * to an undetermined data type (void*)
  */
-void *get_row_offset_on_page(Table *table, uint32_t row_num)
+void *get_cursor_value(Cursor *cursor)
 {
     // Determine in which page the row is located
     // row_num = 203
     // rows_per_page = 100
     // page_num -> 203 / 100 = 2
+    uint32_t row_num = cursor->row_num;
     uint32_t page_num = row_num / ROWS_PER_PAGE;
-    void *page = get_page(table->pager, page_num);
+    void *page = get_page(cursor->table->pager, page_num);
     // Determine the row position relative to the start of the page
     // row_num = 203
     // rows_per_page = 100
@@ -290,6 +327,18 @@ void *get_row_offset_on_page(Table *table, uint32_t row_num)
     uint32_t row_offset = row_num % ROWS_PER_PAGE;
     uint32_t byte_offset = row_offset * ROW_SIZE;
     return page + byte_offset;
+}
+
+/*
+ * Advance the cursor one row. If the cursor reaches the end of the table, set it as end_of_table cursor.
+ */
+void cursor_advance(Cursor *cursor)
+{
+    cursor->row_num += 1;
+    if (cursor->row_num >= cursor->table->num_rows)
+    {
+        cursor->end_of_table = true;
+    }
 }
 
 /*
@@ -454,6 +503,9 @@ PrepareResult prepare_statement(InputBuffer *input_buffer, Statement *statement)
     return PREPARE_UNRECOGNIZED_STATEMENT;
 }
 
+/*
+ *
+ */
 ExecuteResult execute_insert(Statement *statement, Table *table)
 {
     // If the row cap for the table is reached, do not insert
@@ -462,11 +514,12 @@ ExecuteResult execute_insert(Statement *statement, Table *table)
         return EXECUTE_TABLE_FULL;
     }
 
+    Cursor *cursor = get_end_of_table_cursor(table);
     Row *row_to_insert = &(statement->row_to_insert);
     // This is the memory address, taken from getting the page
     // memory address + its size in bits, thus giving the exact memory address
     // where the row is located
-    void *row_offset_on_page = get_row_offset_on_page(table, table->num_rows);
+    void *row_offset_on_page = get_cursor_value(cursor);
 
     // Serialize the row(convert into a linear bite array). Copy the row data on the required memory offset
     serialize_row(row_to_insert, row_offset_on_page);
@@ -474,21 +527,23 @@ ExecuteResult execute_insert(Statement *statement, Table *table)
     return EXECUTE_SUCCESS;
 }
 
+/*
+ *
+ */
 ExecuteResult execute_select(Statement *statement, Table *table)
 {
     Row row;
-    for (uint32_t i = 0; i < table->num_rows; i++)
-    {
-        {
-            // This is the memory address, taken from getting the page
-            // memory address + its size in bits, thus giving the exact memory address
-            // where the row is located
-            void *row_offset_on_page = get_row_offset_on_page(table, i);
+    Cursor *cursor = get_start_of_table_cursor(table);
 
-            // Deserialize the row (convert a linear bite array into structured data). Copy the row data on the required memory offset
-            deserialize_row(row_offset_on_page, &row);
-            print_row(&row);
-        }
+    // Up until the end_of_table variable is set to true
+    while (!(cursor->end_of_table))
+    {
+        void *cursor_value = get_cursor_value(cursor);
+
+        // Deserialize the row (convert a linear bite array into structured data). Copy the row data on the required memory offset
+        deserialize_row(cursor_value, &row);
+        print_row(&row);
+        cursor_advance(cursor);
     }
     return EXECUTE_SUCCESS;
 }
