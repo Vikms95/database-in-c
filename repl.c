@@ -97,6 +97,7 @@ typedef struct
 {
     uint32_t num_rows;
     Pager *pager; // Refence to the general pager. This is done to avoid passing down the pager as parameters.
+    uint32_t root_page_num;
 } Table;
 
 typedef struct
@@ -249,7 +250,7 @@ void *get_page(Pager *pager, uint32_t page_num)
 /*
  *Gets the offset of the page within the table and writes it back to disk to be able to persist the data and ensure durability.
  */
-void pager_flush(Pager *pager, uint32_t page_num, uint32_t size)
+void pager_flush(Pager *pager, uint32_t page_num)
 {
     // Although this has been checked before, double checking that the page is not NULL
     // or we could incur to a segmentation fault
@@ -442,7 +443,14 @@ Table *db_open(const char *filename)
 
     // Give a reference to the pager from the table itself
     table->pager = pager;
-    table->num_rows = num_rows;
+    table->root_page_num = 0;
+
+    if (pager->num_pages == 0)
+    {
+        // New database file. Initialize page 0 as leaf node.
+        void *root_node = get_page(pager, 0);
+        initialize_leaf_node(root_node);
+    }
 }
 
 /*
@@ -541,8 +549,8 @@ PrepareResult prepare_statement(InputBuffer *input_buffer, Statement *statement)
  */
 ExecuteResult execute_insert(Statement *statement, Table *table)
 {
-    // If the row cap for the table is reached, do not insert
-    if (table->num_rows >= TABLE_MAX_ROWS)
+    void *node = get_page(table->pager, table->root_page_num);
+    if ((*leaf_node_num_cells(node) >= LEAF_NODE_MAX_CELLS))
     {
         return EXECUTE_TABLE_FULL;
     }
@@ -555,8 +563,7 @@ ExecuteResult execute_insert(Statement *statement, Table *table)
     void *row_offset_on_page = get_cursor_value(cursor);
 
     // Serialize the row(convert into a linear bite array). Copy the row data on the required memory offset
-    serialize_row(row_to_insert, row_offset_on_page);
-    table->num_rows += 1;
+    leaf_node_insert(cursor, row_to_insert->id, row_to_insert);
     return EXECUTE_SUCCESS;
 }
 
@@ -738,6 +745,32 @@ void *leaf_node_value(void *node, uint32_t cell_num)
 void initialize_leaf_node(void *node)
 {
     *leaf_node_num_cells(node) = 0;
+}
+
+void leaf_node_insert(Cursor *cursor, uint32_t key, Row *value)
+{
+    void *node = get_page(cursor->table->pager, cursor->page_num);
+
+    uint32_t num_cells = *leaf_node_num_cells(node);
+    if (num_cells >= LEAF_NODE_MAX_CELLS)
+    {
+        // Node full
+        printf("Need to implement splitting a leaf node.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (cursor->cell_num < num_cells)
+    {
+        // Make room for new cell
+        for (uint32_t i = num_cells; i < cursor->cell_num; i--)
+        {
+            memcpy(leaf_node_cell(node, i), leaf_node_cell(node, i - 1), LEAF_NODE_CELL_SIZE);
+        }
+    }
+
+    *(leaf_node_num_cells(node)) += 1;
+    *(leaf_node_key(node, cursor->cell_num)) = key;
+    serialize_row(value, leaf_node_value(node, cursor->cell_num));
 }
 
 int main(int argc, char *argv[])
