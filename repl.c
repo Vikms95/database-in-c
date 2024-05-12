@@ -64,6 +64,7 @@ typedef struct
     int file_descriptor;
     uint32_t file_length;
     void *pages[TABLE_MAX_PAGES];
+    uint32_t num_pages;
 } Pager;
 
 // Struct for managing user input.
@@ -72,6 +73,7 @@ typedef struct
     char *buffer;         // Pointer
     size_t buffer_length; // Unsigned integer type (only can be positive)
     ssize_t input_length; // Signed integer which can represent errors with the value -1
+    uint32_t root_page_num;
 } InputBuffer;
 
 // Struct representing a single row in the database.
@@ -99,9 +101,10 @@ typedef struct
 
 typedef struct
 {
-    Table *table; // Reference to the table its part of. This is done to avoid passing down the table as parameters.
-    uint32_t row_num;
+    Table *table;      // Reference to the table its part of. This is done to avoid passing down the table as parameters.
     bool end_of_table; // Indicates a position one past the last element
+    uint32_t page_num;
+    uint32_t cell_num;
 } Cursor;
 
 // This macro calculates the size of a specific attribute within a structure.
@@ -121,8 +124,6 @@ const uint32_t EMAIL_OFFSET = USERNAME_OFFSET + USERNAME_SIZE;
 const uint32_t ROW_SIZE = ID_SIZE + USERNAME_SIZE + EMAIL_SIZE;
 
 const uint32_t PAGE_SIZE = 4096;
-const uint32_t ROWS_PER_PAGE = PAGE_SIZE / ROW_SIZE;
-const uint32_t TABLE_MAX_ROWS = ROWS_PER_PAGE * TABLE_MAX_PAGES;
 
 // Node header format
 const uint32_t NODE_TYPE_SIZE = sizeof(uint8_t);
@@ -141,7 +142,7 @@ const uint32_t LEAF_NODE_NUM_CELLS_SIZE = sizeof(uint32_t);
 const uint32_t LEAF_NODE_NUM_CELLS_OFFSET = COMMON_NODE_HEADER_SIZE;
 const uint32_t LEAF_NODE_HEADER_SIZE = COMMON_NODE_HEADER_SIZE + LEAF_NODE_NUM_CELLS_SIZE;
 
-// Lead node body layout
+// Leaf node body layout
 const uint32_t LEAF_NODE_KEY_SIZE = sizeof(uint32_t);
 const uint32_t LEAF_NODE_KEY_OFFSET = 0;
 const uint32_t LEAF_NODE_VALUE_SIZE = ROW_SIZE;
@@ -156,10 +157,14 @@ Cursor *get_start_of_table_cursor(Table *table)
 {
     Cursor *cursor = malloc(sizeof(Cursor));
     cursor->table = table;
-    cursor->row_num = 0;
     // The boolean would be true if the table had no rows,
     // because the position 0 would be already the end of the table
-    cursor->end_of_table = (table->num_rows == 0);
+    cursor->page_num = table->root_page_num;
+    cursor->cell_num = 0;
+
+    void *root_node = get_page(table->pager, table->root_page_num);
+    uint32_t num_cells = *leaf_node_num_cells(root_node);
+    cursor->end_of_table = (num_cells == 0);
     return cursor;
 }
 
@@ -170,7 +175,11 @@ Cursor *get_end_of_table_cursor(Table *table)
 {
     Cursor *cursor = malloc(sizeof(Cursor));
     cursor->table = table;
-    cursor->row_num = table->num_rows;
+    cursor->page_num = table->root_page_num;
+
+    void *root_node = get_page(table->pager, table->root_page_num);
+    uint32_t num_cells = *leaf_node_num_cells(root_node);
+    cursor->cell_num = num_cells;
     // The boolean would be true if the table had no rows,
     // because the position 0 would be already the end of the table
     cursor->end_of_table = true;
@@ -228,6 +237,10 @@ void *get_page(Pager *pager, uint32_t page_num)
 
         // Add the created page to the pager reference
         pager->pages[page_num] = page;
+        if (page_num >= pager->num_pages)
+        {
+            pager->num_pages = page_num + 1;
+        }
     }
     // Finally, the function returns the address of the page in memory, making it available for the calling function to use.
     return pager->pages[page_num];
@@ -258,7 +271,7 @@ void pager_flush(Pager *pager, uint32_t page_num, uint32_t size)
     }
 
     // Persist data to the file_descriptor reference
-    ssize_t bytes_written = write(pager->file_descriptor, pager->pages[page_num], size);
+    ssize_t bytes_written = write(pager->file_descriptor, pager->pages[page_num], PAGE_SIZE);
 
     if (bytes_written == -1)
     {
@@ -287,26 +300,15 @@ void db_close(Table *table)
     uint32_t num_full_pages = table->num_rows / ROWS_PER_PAGE;
 
     // Empty whatever reference the database might have
-    for (uint32_t i = 0; i < num_full_pages; i++)
+    for (uint32_t i = 0; i < pager->num_pages; i++)
     {
         if (pager->pages[i] == NULL)
         {
             continue;
         }
 
-        pager_flush(pager, i, PAGE_SIZE);
+        pager_flush(pager, i);
         free_page(pager, i);
-    }
-
-    // If there is a remainder, there might be a page which is not completely filled
-    // up after the maximum amount of rows per page
-    uint32_t num_additional_rows = table->num_rows % ROWS_PER_PAGE;
-    if (num_additional_rows > 0)
-    {
-        // The amount of pages is used as the index of the last row within the page
-        uint32_t page_num = num_full_pages;
-        pager_flush(pager, page_num, num_additional_rows * ROW_SIZE);
-        free_page(pager, page_num);
     }
 
     // Close the df opened on program startup. Not closing a file descriptor properly
@@ -348,16 +350,13 @@ void *get_cursor_value(Cursor *cursor)
     // row_num = 203
     // rows_per_page = 100
     // page_num -> 203 / 100 = 2
-    uint32_t row_num = cursor->row_num;
-    uint32_t page_num = row_num / ROWS_PER_PAGE;
+    uint32_t page_num = cursor->page_num;
     void *page = get_page(cursor->table->pager, page_num);
     // Determine the row position relative to the start of the page
     // row_num = 203
     // rows_per_page = 100
     // row_offset -> 203 % 100 = 3 (4th row since this is 0 indexed)
-    uint32_t row_offset = row_num % ROWS_PER_PAGE;
-    uint32_t byte_offset = row_offset * ROW_SIZE;
-    return page + byte_offset;
+    return leaf_node_value(page, cursor->cell_num);
 }
 
 /*
@@ -365,8 +364,11 @@ void *get_cursor_value(Cursor *cursor)
  */
 void cursor_advance(Cursor *cursor)
 {
-    cursor->row_num += 1;
-    if (cursor->row_num >= cursor->table->num_rows)
+    uint32_t page_num = cursor->page_num;
+    void *node = get_page(cursor->table->pager, page_num);
+
+    cursor->cell_num += 1;
+    if (cursor->cell_num >= (*leaf_node_num_cells(node)))
     {
         cursor->end_of_table = true;
     }
@@ -669,6 +671,73 @@ void deserialize_row(void *row_source, Row *destination)
     memcpy(&(destination->id), row_source + ID_OFFSET, ID_SIZE);
     memcpy(&(destination->username), row_source + USERNAME_OFFSET, USERNAME_SIZE);
     memcpy(&(destination->email), row_source + EMAIL_OFFSET, EMAIL_SIZE);
+}
+
+/**
+ * Returns a pointer to the number of cells in the leaf node.
+ * This function calculates the location of the cell count within the leaf node header
+ * and returns a pointer to it. This allows direct modification of the cell count.
+ *
+ * @param node Pointer to the start of a leaf node in memory.
+ * @return Pointer to the number of cells (uint32_t) in the leaf node.
+ */
+uint32_t *leaf_node_num_cells(void *node)
+{
+    return (uint32_t *)(node + LEAF_NODE_NUM_CELLS_OFFSET);
+}
+
+/**
+ * Retrieves a pointer to the specific cell within a leaf node.
+ * Cells are key/value pairs stored sequentially in the leaf node body.
+ * This function calculates the start address of a specified cell based on its index.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell to access.
+ * @return Pointer to the start of the specified cell.
+ */
+void *leaf_node_cell(void *node, uint32_t cell_num)
+{
+    return (void *)(node + LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE);
+}
+
+/**
+ * Retrieves a pointer to the key part of a specific cell in a leaf node.
+ * This function reuses leaf_node_cell to find the cell and then returns its starting point,
+ * as the key is the first part of a cell.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell whose key is to be accessed.
+ * @return Pointer to the key (uint32_t) within the specified cell.
+ */
+uint32_t *leaf_node_key(void *node, uint32_t cell_num)
+{
+    return leaf_node_cell(node, cell_num);
+}
+
+/**
+ * Retrieves a pointer to the value part of a specific cell in a leaf node.
+ * Since values follow keys within the cell structure, this function calculates the
+ * address by moving past the key portion.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell whose value is to be accessed.
+ * @return Pointer to the value part within the specified cell.
+ */
+void *leaf_node_value(void *node, uint32_t cell_num)
+{
+    return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
+}
+
+/**
+ * Initializes a leaf node by setting its cell count to zero.
+ * This function is typically used when a new leaf node is created to ensure it
+ * is in a clean state with no cells stored in it.
+ *
+ * @param node Pointer to the start of the leaf node to initialize.
+ */
+void initialize_leaf_node(void *node)
+{
+    *leaf_node_num_cells(node) = 0;
 }
 
 int main(int argc, char *argv[])
