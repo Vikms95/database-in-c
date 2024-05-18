@@ -185,7 +185,18 @@ void debug_table(Table *table)
  */
 void *leaf_node_cell(void *node, uint32_t cell_num)
 {
-    return (void *)(node + LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE);
+    printf("Lead node cell.\n");
+    printf("node address: %p\n", node);
+    printf("cell_num: %u\n", cell_num);
+
+    // Calculate the offset
+    uint32_t offset = LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE;
+    printf("Calculated offset: %u\n", offset);
+
+    // Calculate the cell address
+    void *cell_address = (uint8_t *)node + offset; // Cast to uint8_t* for pointer arithmetic
+    printf("Calculated cell address: %p\n", cell_address);
+    return node + LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE;
 }
 
 /**
@@ -199,6 +210,7 @@ void *leaf_node_cell(void *node, uint32_t cell_num)
  */
 void *leaf_node_value(void *node, uint32_t cell_num)
 {
+    printf("Leaf node value.\n");
     return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
 }
 /**
@@ -225,6 +237,7 @@ uint32_t *leaf_node_num_cells(void *node)
  */
 uint32_t *leaf_node_key(void *node, uint32_t cell_num)
 {
+    printf("leaf node key.\n");
     return leaf_node_cell(node, cell_num);
 }
 
@@ -301,7 +314,7 @@ Cursor *get_start_of_table_cursor(Table *table)
     cursor->cell_num = 0;
 
     void *root_node = get_page(table->pager, table->root_page_num);
-    uint32_t num_cells = leaf_node_num_cells(root_node);
+    uint32_t num_cells = *leaf_node_num_cells(root_node);
     cursor->end_of_table = (num_cells == 0);
     return cursor;
 }
@@ -316,7 +329,7 @@ Cursor *get_end_of_table_cursor(Table *table)
     cursor->page_num = table->root_page_num;
 
     void *root_node = get_page(table->pager, table->root_page_num);
-    uint32_t num_cells = leaf_node_num_cells(root_node);
+    uint32_t num_cells = *leaf_node_num_cells(root_node);
     cursor->cell_num = num_cells;
     // The boolean would be true if the table had no rows,
     // because the position 0 would be already the end of the table
@@ -670,22 +683,26 @@ PrepareResult prepare_statement(InputBuffer *input_buffer, Statement *statement)
  */
 ExecuteResult execute_insert(Statement *statement, Table *table)
 {
-    printf("Executing insert.\n");
     void *node = get_page(table->pager, table->root_page_num);
-    if ((leaf_node_num_cells(node) >= LEAF_NODE_MAX_CELLS))
+    if ((*leaf_node_num_cells(node) >= LEAF_NODE_MAX_CELLS))
     {
         return EXECUTE_TABLE_FULL;
     }
 
+    printf("Executing insert 1 .\n");
     Cursor *cursor = get_end_of_table_cursor(table);
+    printf("Executing insert 2 .\n");
     Row *row_to_insert = &(statement->row_to_insert);
     // This is the memory address, taken from getting the page
     // memory address + its size in bits, thus giving the exact memory address
     // where the row is located
+    printf("Executing insert 3 .\n");
     void *row_offset_on_page = get_cursor_value(cursor);
 
+    printf("Executing insert 4 .\n");
     // Serialize the row(convert into a linear bite array). Copy the row data on the required memory offset
     leaf_node_insert(cursor, row_to_insert->id, row_to_insert);
+    printf("Executing insert 5 .\n");
     return EXECUTE_SUCCESS;
 }
 
@@ -706,8 +723,6 @@ ExecuteResult execute_select(Statement *statement, Table *table)
         deserialize_row(cursor_value, &row);
         print_row(&row);
         cursor_advance(cursor);
-        printf("ending a loop.\n");
-        printf("ending a loop. end_of_table: %d\n", cursor->end_of_table);
     }
     return EXECUTE_SUCCESS;
 }
@@ -839,9 +854,15 @@ void initialize_leaf_node(void *node)
 
 void leaf_node_insert(Cursor *cursor, uint32_t key, Row *value)
 {
+    printf("Executing insert 7 .\n");
+    printf("Cursor info:\n");
+    printf("  page_num: %u\n", cursor->page_num);
+    printf("  cell_num: %u\n", cursor->cell_num);
     void *node = get_page(cursor->table->pager, cursor->page_num);
 
+    printf("Executing insert 8 .\n");
     uint32_t num_cells = *leaf_node_num_cells(node);
+    printf("Executing insert 9 .\n");
     if (num_cells >= LEAF_NODE_MAX_CELLS)
     {
         // Node full
@@ -849,18 +870,25 @@ void leaf_node_insert(Cursor *cursor, uint32_t key, Row *value)
         exit(EXIT_FAILURE);
     }
 
+    printf("Executing insert 10 .\n");
     if (cursor->cell_num < num_cells)
     {
         // Make room for new cell
-        for (uint32_t i = num_cells; i < cursor->cell_num; i--)
+        printf("Executing insert 11 .\n");
+        for (uint32_t i = num_cells; i > cursor->cell_num; i--)
         {
+            printf("Executing insert 12 .\n");
             memcpy(leaf_node_cell(node, i), leaf_node_cell(node, i - 1), LEAF_NODE_CELL_SIZE);
         }
     }
 
+    printf("Executing insert 13 .\n");
     *(leaf_node_num_cells(node)) += 1;
+    printf("Executing insert 14 .\n");
     *(leaf_node_key(node, cursor->cell_num)) = key;
+    printf("Executing insert 15 .\n");
     serialize_row(value, leaf_node_value(node, cursor->cell_num));
+    printf("Executing insert 16 .\n");
 }
 
 int main(int argc, char *argv[])
