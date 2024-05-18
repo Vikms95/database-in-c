@@ -293,24 +293,16 @@ void *get_page(Pager *pager, uint32_t page_num)
 Cursor *get_start_of_table_cursor(Table *table)
 {
 
-    printf("hello world1.\n");
     Cursor *cursor = malloc(sizeof(Cursor));
-    printf("hello world1.\n");
     cursor->table = table;
     // The boolean would be true if the table had no rows,
     // because the position 0 would be already the end of the table
-    printf("hello world1.\n");
     cursor->page_num = table->root_page_num;
-    printf("hello world1.\n");
     cursor->cell_num = 0;
 
-    printf("hello world1.\n");
     void *root_node = get_page(table->pager, table->root_page_num);
-    printf("hello world1.\n");
     uint32_t num_cells = leaf_node_num_cells(root_node);
-    printf("hello world1.\n");
     cursor->end_of_table = (num_cells == 0);
-    printf("hello world1.\n");
     return cursor;
 }
 
@@ -481,7 +473,7 @@ void cursor_advance(Cursor *cursor)
     void *node = get_page(cursor->table->pager, page_num);
 
     cursor->cell_num += 1;
-    if (cursor->cell_num >= (leaf_node_num_cells(node)))
+    if (cursor->cell_num >= (*leaf_node_num_cells(node)))
     {
         cursor->end_of_table = true;
     }
@@ -715,6 +707,7 @@ ExecuteResult execute_select(Statement *statement, Table *table)
         print_row(&row);
         cursor_advance(cursor);
         printf("ending a loop.\n");
+        printf("ending a loop. end_of_table: %d\n", cursor->end_of_table);
     }
     return EXECUTE_SUCCESS;
 }
