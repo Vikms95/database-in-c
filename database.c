@@ -1,5 +1,4 @@
-// PART 5 - changed Table struct, now fix errors
-// *pointer_address->value = 123 - modify value of where the pointer is pointing to
+// PART 5 - changed Table struct, now fix errors// *pointer_address->value = 123 - modify value of where the pointer is pointing to
 // &(pointer_address) -  reference the pointer address in memory, not where the pointer points to
 // pointer_address->value = NULL - usually always used with NULL, since it modifies where the pointer is pointing, the pointer address
 // and it is weird you would do pointer->value = 0x38287832
@@ -205,50 +204,7 @@ void debug_cursor(Cursor *cursor)
     printf("    file_length: %u\n", cursor->table->pager->file_length);
     printf("    num_pages: %u\n", cursor->table->pager->num_pages);
 }
-NodeType get_node_type(void *node)
-{
-    uint32_t value = *((uint8_t *)(node + NODE_TYPE_OFFSET));
-    return (NodeType)value;
-}
-void set_node_type(void *node, NodeType type)
-{
-    uint8_t value = type;
-    *((uint8_t *)(node + NODE_TYPE_OFFSET)) = value;
-}
-Cursor *leaf_node_find(Table *table, uint32_t page_num, uint32_t key)
-{
-    void *node = get_page(table->pager, page_num);
-    uint32_t num_cells = *leaf_node_num_cells(node);
 
-    Cursor *cursor = malloc(sizeof(Cursor));
-    cursor->table = table;
-    cursor->page_num = page_num;
-
-    // Binary search
-    uint32_t min_index = 0;
-    uint32_t one_past_max_index = num_cells;
-    while (one_past_max_index != min_index)
-    {
-        uint32_t index = (min_index + one_past_max_index) / 2;
-        uint32_t key_at_index = *leaf_node_key(node, index);
-        if (key == key_at_index)
-        {
-            cursor->cell_num = index;
-            return cursor;
-        }
-        if (key < key_at_index)
-        {
-            one_past_max_index = index;
-        }
-        else
-        {
-            min_index = index + 1;
-        }
-    }
-
-    cursor->cell_num = min_index;
-    return cursor;
-}
 /**
  * Retrieves a pointer to the specific cell within a leaf node.
  * Cells are key/value pairs stored sequentially in the leaf node body.
@@ -275,32 +231,6 @@ void *leaf_node_cell(void *node, uint32_t cell_num)
 }
 
 /**
- * Retrieves a pointer to the value part of a specific cell in a leaf node.
- * Since values follow keys within the cell structure, this function calculates the
- * address by moving past the key portion.
- *
- * @param node Pointer to the start of the leaf node.
- * @param cell_num Index of the cell whose value is to be accessed.
- * @return Pointer to the value part within the specified cell.
- */
-void *leaf_node_value(void *node, uint32_t cell_num)
-{
-    return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
-}
-/**
- * Returns a pointer to the number of cells in the leaf node.
- * This function calculates the location of the cell count within the leaf node header
- * and returns a pointer to it. This allows direct modification of the cell count.
- *
- * @param node Pointer to the start of a leaf node in memory.
- * @return Pointer to the number of cells (uint32_t) in the leaf node.
- */
-uint32_t *leaf_node_num_cells(void *node)
-{
-    return (node + LEAF_NODE_NUM_CELLS_OFFSET);
-}
-
-/**
  * Retrieves a pointer to the key part of a specific cell in a leaf node.
  * This function reuses leaf_node_cell to find the cell and then returns its starting point,
  * as the key is the first part of a cell.
@@ -313,7 +243,6 @@ uint32_t *leaf_node_key(void *node, uint32_t cell_num)
 {
     return leaf_node_cell(node, cell_num);
 }
-
 /*
  *Retrieves or creates a new page within the pager
  */
@@ -362,6 +291,76 @@ void *get_page(Pager *pager, uint32_t page_num)
     return pager->pages[page_num];
 }
 
+NodeType get_node_type(void *node)
+{
+    uint32_t value = *((uint8_t *)(node + NODE_TYPE_OFFSET));
+    return (NodeType)value;
+}
+void set_node_type(void *node, NodeType type)
+{
+    uint8_t value = type;
+    *((uint8_t *)(node + NODE_TYPE_OFFSET)) = value;
+}
+/**
+ * Returns a pointer to the number of cells in the leaf node.
+ * This function calculates the location of the cell count within the leaf node header
+ * and returns a pointer to it. This allows direct modification of the cell count.
+ *
+ * @param node Pointer to the start of a leaf node in memory.
+ * @return Pointer to the number of cells (uint32_t) in the leaf node.
+ */
+uint32_t *leaf_node_num_cells(void *node)
+{
+    return (node + LEAF_NODE_NUM_CELLS_OFFSET);
+}
+
+Cursor *leaf_node_find(Table *table, uint32_t page_num, uint32_t key)
+{
+    void *node = get_page(table->pager, page_num);
+    uint32_t num_cells = *leaf_node_num_cells(node);
+
+    Cursor *cursor = malloc(sizeof(Cursor));
+    cursor->table = table;
+    cursor->page_num = page_num;
+
+    // Binary search
+    uint32_t min_index = 0;
+    uint32_t one_past_max_index = num_cells;
+    while (one_past_max_index != min_index)
+    {
+        uint32_t index = (min_index + one_past_max_index) / 2;
+        uint32_t key_at_index = *leaf_node_key(node, index);
+        if (key == key_at_index)
+        {
+            cursor->cell_num = index;
+            return cursor;
+        }
+        if (key < key_at_index)
+        {
+            one_past_max_index = index;
+        }
+        else
+        {
+            min_index = index + 1;
+        }
+    }
+
+    cursor->cell_num = min_index;
+    return cursor;
+}
+/**
+ * Retrieves a pointer to the value part of a specific cell in a leaf node.
+ * Since values follow keys within the cell structure, this function calculates the
+ * address by moving past the key portion.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell whose value is to be accessed.
+ * @return Pointer to the value part within the specified cell.
+ */
+void *leaf_node_value(void *node, uint32_t cell_num)
+{
+    return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
+}
 /*
  * Creates a cursor at the starting point of the table.
  */
@@ -397,7 +396,7 @@ Cursor *table_find(Table *table, uint32_t key)
     }
     else
     {
-        printf("Need to implement seatching an internal node\n");
+        printf("Need to implement searching an internal node\n");
         exit(EXIT_FAILURE);
     }
 }
