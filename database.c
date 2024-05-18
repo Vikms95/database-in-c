@@ -234,35 +234,6 @@ uint32_t *leaf_node_key(void *node, uint32_t cell_num)
 void *get_page(Pager *pager, uint32_t page_num)
 {
     // If we are trying to get or allocate a number maximum to the allowed max size, error out.
-    if (page_num > TABLE_MAX_PAGES)
-    {
-        printf("max pages.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("second call.\n");
-    if (page_num >= TABLE_MAX_PAGES)
-    {
-        printf("max pages.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("second call.\n");
-
-    // Check if pager is NULL
-    if (pager == NULL)
-    {
-        printf("Pager is NULL.\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Check if pages array is NULL (This shouldn't be the case if properly initialized)
-    if (pager->pages == NULL)
-    {
-        printf("Pages array is NULL.\n");
-        exit(EXIT_FAILURE);
-    }
-
     // This provides a block of memory equal to the size of one page where the data can be stored.
     if (pager->pages[page_num] == NULL)
     {
@@ -312,7 +283,6 @@ void *get_page(Pager *pager, uint32_t page_num)
             pager->num_pages = +1;
         }
     }
-    printf("after if.\n");
     // Finally, the function returns the address of the page in memory, making it available for the calling function to use.
     return pager->pages[page_num];
 }
@@ -493,9 +463,6 @@ void *get_cursor_value(Cursor *cursor)
     // row_num = 203
     // rows_per_page = 100
     // page_num -> 203 / 100 = 2
-    printf("Before debug.\n");
-    debug_cursor(cursor);
-    printf("After debug.\n");
     uint32_t page_num = cursor->page_num;
     void *page = get_page(cursor->table->pager, page_num);
     // Determine the row position relative to the start of the page
@@ -738,20 +705,16 @@ ExecuteResult execute_select(Statement *statement, Table *table)
     Row row;
     Cursor *cursor = get_start_of_table_cursor(table);
 
-    printf("hello 2.\n");
     // Up until the end_of_table variable is set to true
     while (!(cursor->end_of_table))
     {
-        printf("hello 2.\n");
         void *cursor_value = get_cursor_value(cursor);
 
-        printf("hello 2.\n");
         // Deserialize the row (convert a linear bite array into structured data). Copy the row data on the required memory offset
         deserialize_row(cursor_value, &row);
-        printf("hello 2.\n");
         print_row(&row);
-        printf("hello 2.\n");
         cursor_advance(cursor);
+        printf("ending a loop.\n");
     }
     return EXECUTE_SUCCESS;
 }
@@ -763,13 +726,11 @@ ExecuteResult execute_select(Statement *statement, Table *table)
 ExecuteResult execute_statement(Statement *statement, Table *table)
 {
 
-    printf("hello 2.\n");
     switch (statement->type)
     {
     case (STATEMENT_INSERT):
         return execute_insert(statement, table);
     case (STATEMENT_SELECT):
-        printf("hello 2.\n");
         return execute_select(statement, table);
     }
 }
@@ -922,14 +883,12 @@ int main(int argc, char *argv[])
     char *filename = argv[1];
 
     Table *table = db_open(filename);
-    printf("Before input buffer.\n");
     InputBuffer *input_buffer = new_input_buffer();
 
     while (true)
     {
         print_prompt();
         read_input(input_buffer);
-        printf("hello.\n");
         if (input_buffer->buffer[0] == '.')
         {
             switch (do_meta_command(input_buffer, table))
@@ -945,7 +904,6 @@ int main(int argc, char *argv[])
         Statement statement;
         PrepareResult prepare_result = prepare_statement(input_buffer, &statement);
 
-        printf("hello 1.\n");
         switch (prepare_result)
         {
         case (PREPARE_SUCCESS):
@@ -966,7 +924,6 @@ int main(int argc, char *argv[])
         }
 
         ExecuteResult execute_result = execute_statement(&statement, table);
-        printf("hello 2.\n");
 
         switch (execute_result)
         {
