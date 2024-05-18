@@ -205,6 +205,16 @@ void debug_cursor(Cursor *cursor)
     printf("    file_length: %u\n", cursor->table->pager->file_length);
     printf("    num_pages: %u\n", cursor->table->pager->num_pages);
 }
+NodeType get_node_type(void *node)
+{
+    uint32_t value = *((uint8_t *)(node + NODE_TYPE_OFFSET));
+    return (NodeType)value;
+}
+void set_node_type(void *node, NodeType type)
+{
+    uint8_t value = type;
+    *((uint8_t *)(node + NODE_TYPE_OFFSET)) = value;
+}
 Cursor *leaf_node_find(Table *table, uint32_t page_num, uint32_t key)
 {
     void *node = get_page(table->pager, page_num);
@@ -868,6 +878,7 @@ void deserialize_row(void *row_source, Row *destination)
  */
 void initialize_leaf_node(void *node)
 {
+    set_node_type(node, NODE_LEAF);
     *leaf_node_num_cells(node) = 0;
 }
 
@@ -954,8 +965,12 @@ int main(int argc, char *argv[])
 
         switch (execute_result)
         {
+
         case (EXECUTE_SUCCESS):
             printf("Executed. \n");
+            break;
+        case (EXECUTE_DUPLICATE_KEY):
+            printf("Error duplicated key. \n");
             break;
         case (EXECUTE_TABLE_FULL):
             printf("Error table full. \n");
