@@ -151,21 +151,196 @@ const uint32_t LEAF_NODE_VALUE_OFFSET = LEAF_NODE_KEY_OFFSET + LEAF_NODE_KEY_SIZ
 const uint32_t LEAF_NODE_CELL_SIZE = LEAF_NODE_KEY_SIZE + LEAF_NODE_VALUE_SIZE;
 const uint32_t LEAF_NODE_SPACE_FOR_CELLS = PAGE_SIZE - LEAF_NODE_HEADER_SIZE;
 const uint32_t LEAF_NODE_MAX_CELLS = LEAF_NODE_SPACE_FOR_CELLS / LEAF_NODE_CELL_SIZE;
+
+void debug_table(Table *table)
+{
+    if (table == NULL)
+    {
+        printf("Table is NULL.\n");
+        return;
+    }
+    printf("Table info:\n");
+    printf("  num_rows: %u\n", table->num_rows);
+    printf("  root_page_num: %u\n", table->root_page_num);
+
+    if (table->pager == NULL)
+    {
+        printf("  Pager is NULL.\n");
+        return;
+    }
+
+    printf("  Pager info:\n");
+    printf("    file_descriptor: %d\n", table->pager->file_descriptor);
+    printf("    file_length: %u\n", table->pager->file_length);
+    printf("    num_pages: %u\n", table->pager->num_pages);
+}
+/**
+ * Retrieves a pointer to the specific cell within a leaf node.
+ * Cells are key/value pairs stored sequentially in the leaf node body.
+ * This function calculates the start address of a specified cell based on its index.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell to access.
+ * @return Pointer to the start of the specified cell.
+ */
+void *leaf_node_cell(void *node, uint32_t cell_num)
+{
+    return (void *)(node + LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE);
+}
+
+/**
+ * Retrieves a pointer to the value part of a specific cell in a leaf node.
+ * Since values follow keys within the cell structure, this function calculates the
+ * address by moving past the key portion.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell whose value is to be accessed.
+ * @return Pointer to the value part within the specified cell.
+ */
+void *leaf_node_value(void *node, uint32_t cell_num)
+{
+    return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
+}
+/**
+ * Returns a pointer to the number of cells in the leaf node.
+ * This function calculates the location of the cell count within the leaf node header
+ * and returns a pointer to it. This allows direct modification of the cell count.
+ *
+ * @param node Pointer to the start of a leaf node in memory.
+ * @return Pointer to the number of cells (uint32_t) in the leaf node.
+ */
+uint32_t *leaf_node_num_cells(void *node)
+{
+    return (node + LEAF_NODE_NUM_CELLS_OFFSET);
+}
+
+/**
+ * Retrieves a pointer to the key part of a specific cell in a leaf node.
+ * This function reuses leaf_node_cell to find the cell and then returns its starting point,
+ * as the key is the first part of a cell.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell whose key is to be accessed.
+ * @return Pointer to the key (uint32_t) within the specified cell.
+ */
+uint32_t *leaf_node_key(void *node, uint32_t cell_num)
+{
+    return leaf_node_cell(node, cell_num);
+}
+
+/*
+ *Retrieves or creates a new page within the pager
+ */
+void *get_page(Pager *pager, uint32_t page_num)
+{
+    // If we are trying to get or allocate a number maximum to the allowed max size, error out.
+    if (page_num > TABLE_MAX_PAGES)
+    {
+        printf("max pages.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("second call.\n");
+    if (page_num >= TABLE_MAX_PAGES)
+    {
+        printf("max pages.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("second call.\n");
+
+    // Check if pager is NULL
+    if (pager == NULL)
+    {
+        printf("Pager is NULL.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Check if pages array is NULL (This shouldn't be the case if properly initialized)
+    if (pager->pages == NULL)
+    {
+        printf("Pages array is NULL.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // This provides a block of memory equal to the size of one page where the data can be stored.
+    if (pager->pages[page_num] == NULL)
+    {
+        printf("is null.\n");
+        // Allocate memory for new page
+        void *page = malloc(PAGE_SIZE);
+        uint32_t total_num_pages = pager->file_length / PAGE_SIZE;
+
+        // If there is a remainder, there is an extra page being used in the file
+        // but since it is not completed, we would not be counting it on the total_num_pages variable
+        if (pager->file_length % PAGE_SIZE)
+        {
+            printf("get page.\n");
+            total_num_pages += 1;
+        }
+
+        // If the page we want to retrieve is not out of bounds of the total amount of pages there is
+        if (page_num <= total_num_pages)
+        {
+            printf("get page.\n");
+            // This sets the file to start at the correct offset
+            // (at the beggining of the desired page) for the next read operation
+            off_t offset = lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
+
+            if (offset == -1)
+            {
+                printf("Error seeking file: %d\n", errno);
+                exit(EXIT_FAILURE);
+            }
+
+            printf("get page.\n");
+            ssize_t bytes_read = read(pager->file_descriptor, page, PAGE_SIZE);
+
+            if (bytes_read == -1)
+            {
+                printf("Error reading file: %d\n", errno);
+                exit(EXIT_FAILURE);
+            }
+        }
+
+        printf("get page.\n");
+        // Add the created page to the pager reference
+        pager->pages[page_num] = page;
+        if (page_num >= pager->num_pages)
+        {
+            printf("get page.\n");
+            pager->num_pages = +1;
+        }
+    }
+    printf("after if.\n");
+    // Finally, the function returns the address of the page in memory, making it available for the calling function to use.
+    return pager->pages[page_num];
+}
+
 /*
  * Creates a cursor at the starting point of the table.
  */
 Cursor *get_start_of_table_cursor(Table *table)
 {
+
+    printf("hello world1.\n");
     Cursor *cursor = malloc(sizeof(Cursor));
+    printf("hello world1.\n");
     cursor->table = table;
     // The boolean would be true if the table had no rows,
     // because the position 0 would be already the end of the table
+    printf("hello world1.\n");
     cursor->page_num = table->root_page_num;
+    printf("hello world1.\n");
     cursor->cell_num = 0;
 
+    printf("hello world1.\n");
     void *root_node = get_page(table->pager, table->root_page_num);
-    uint32_t num_cells = *leaf_node_num_cells(root_node);
+    printf("hello world1.\n");
+    uint32_t num_cells = leaf_node_num_cells(root_node);
+    printf("hello world1.\n");
     cursor->end_of_table = (num_cells == 0);
+    printf("hello world1.\n");
     return cursor;
 }
 
@@ -179,72 +354,12 @@ Cursor *get_end_of_table_cursor(Table *table)
     cursor->page_num = table->root_page_num;
 
     void *root_node = get_page(table->pager, table->root_page_num);
-    uint32_t num_cells = *leaf_node_num_cells(root_node);
+    uint32_t num_cells = leaf_node_num_cells(root_node);
     cursor->cell_num = num_cells;
     // The boolean would be true if the table had no rows,
     // because the position 0 would be already the end of the table
     cursor->end_of_table = true;
     return cursor;
-}
-
-/*
- *Retrieves or creates a new page within the pager
- */
-void *get_page(Pager *pager, uint32_t page_num)
-{
-    // If we are trying to get or allocate a number maximum to the allowed max size, error out.
-    if (page_num > TABLE_MAX_PAGES)
-    {
-        printf("Tried to fetch page number out of bounds. %d > %d\n", page_num, TABLE_MAX_PAGES);
-        exit(EXIT_FAILURE);
-    }
-
-    // Upon a cache miss, memory is allocated for the page using malloc(PAGE_SIZE).
-    // This provides a block of memory equal to the size of one page where the data can be stored.
-    if (pager->pages[page_num] == NULL)
-    {
-        // Allocate memory for new page
-        void *page = malloc(PAGE_SIZE);
-        uint32_t total_num_pages = pager->file_length / PAGE_SIZE;
-
-        // If there is a remainder, there is an extra page being used in the file
-        // but since it is not completed, we would not be counting it on the total_num_pages variable
-        if (pager->file_length % PAGE_SIZE)
-        {
-            total_num_pages += 1;
-        }
-
-        // If the page we want to retrieve is not out of bounds of the total amount of pages there is
-        if (page_num <= total_num_pages)
-        {
-            // This sets the file to start at the correct offset
-            // (at the beggining of the desired page) for the next read operation
-            off_t offset = lseek(pager->file_descriptor, page_num * PAGE_SIZE, SEEK_SET);
-
-            if (offset == -1)
-            {
-                printf("Error seeking file: %d\n", errno);
-                exit(EXIT_FAILURE);
-            }
-
-            ssize_t bytes_read = read(pager->file_descriptor, page, PAGE_SIZE);
-
-            if (bytes_read == -1)
-            {
-                printf("Error reading file: %d\n", errno);
-                exit(EXIT_FAILURE);
-            }
-        }
-
-        // Add the created page to the pager reference
-        pager->pages[page_num] = page;
-        if (page_num >= pager->num_pages)
-        {
-            pager->num_pages = page_num + 1;
-        }
-    }
-    // Finally, the function returns the address of the page in memory, making it available for the calling function to use.
-    return pager->pages[page_num];
 }
 
 /*
@@ -339,7 +454,35 @@ void db_close(Table *table)
     free(pager);
     free(table);
 }
+void debug_cursor(Cursor *cursor)
+{
+    printf("Cursor is being debugged.\n");
+    if (cursor == NULL)
+    {
+        printf("Cursor is NULL.\n");
+        return;
+    }
+    printf("Cursor info:\n");
+    printf("  page_num: %u\n", cursor->page_num);
+    printf("  cell_num: %u\n", cursor->cell_num);
 
+    if (cursor->table == NULL)
+    {
+        printf("  Table is NULL.\n");
+        return;
+    }
+
+    if (cursor->table->pager == NULL)
+    {
+        printf("  Pager is NULL.\n");
+        return;
+    }
+
+    printf("  Pager info:\n");
+    printf("    file_descriptor: %d\n", cursor->table->pager->file_descriptor);
+    printf("    file_length: %u\n", cursor->table->pager->file_length);
+    printf("    num_pages: %u\n", cursor->table->pager->num_pages);
+}
 /*
  * Compute the memory address of a row within a table. We return a pointer
  * to an undetermined data type (void*)
@@ -350,6 +493,9 @@ void *get_cursor_value(Cursor *cursor)
     // row_num = 203
     // rows_per_page = 100
     // page_num -> 203 / 100 = 2
+    printf("Before debug.\n");
+    debug_cursor(cursor);
+    printf("After debug.\n");
     uint32_t page_num = cursor->page_num;
     void *page = get_page(cursor->table->pager, page_num);
     // Determine the row position relative to the start of the page
@@ -368,7 +514,7 @@ void cursor_advance(Cursor *cursor)
     void *node = get_page(cursor->table->pager, page_num);
 
     cursor->cell_num += 1;
-    if (cursor->cell_num >= (*leaf_node_num_cells(node)))
+    if (cursor->cell_num >= (leaf_node_num_cells(node)))
     {
         cursor->end_of_table = true;
     }
@@ -415,13 +561,23 @@ Pager *pager_open(const char *filename)
     // Value from opening the file
     pager->file_descriptor = fd;
     pager->file_length = file_length;
+    pager->num_pages = (file_length / PAGE_SIZE);
 
+    if (file_length % PAGE_SIZE != 0)
+    {
+        printf("DB file is not a whole number of pages. Corrupt file.\n");
+        exit(EXIT_FAILURE);
+    }
     // Create as many pages as the amount of max pages a table can have
     // and initialize them to NULL
     for (uint32_t i = 0; i < TABLE_MAX_PAGES; i++)
     {
         pager->pages[i] = NULL;
     }
+    printf("Pager initialized:\n");
+    printf("  file_descriptor: %d\n", pager->file_descriptor);
+    printf("  file_length: %u\n", pager->file_length);
+    printf("  num_pages: %u\n", pager->num_pages);
 
     return pager;
 }
@@ -434,13 +590,7 @@ Table *db_open(const char *filename)
 {
     Pager *pager = pager_open(filename);
 
-    // Based on the pager file_length, divide by the fixed ROW_SIZE and
-    // we get the number of rows to allocate for the table
-    uint32_t num_rows = pager->file_length / ROW_SIZE;
-
     Table *table = malloc(sizeof(Table));
-
-    // Give a reference to the pager from the table itself
     table->pager = pager;
     table->root_page_num = 0;
 
@@ -450,6 +600,8 @@ Table *db_open(const char *filename)
         void *root_node = get_page(pager, 0);
         initialize_leaf_node(root_node);
     }
+    printf("After get page.\n");
+    return table;
 }
 
 /*
@@ -554,14 +706,14 @@ PrepareResult prepare_statement(InputBuffer *input_buffer, Statement *statement)
     }
     return PREPARE_UNRECOGNIZED_STATEMENT;
 }
-
 /*
  *
  */
 ExecuteResult execute_insert(Statement *statement, Table *table)
 {
+    printf("Executing insert.\n");
     void *node = get_page(table->pager, table->root_page_num);
-    if ((*leaf_node_num_cells(node) >= LEAF_NODE_MAX_CELLS))
+    if ((leaf_node_num_cells(node) >= LEAF_NODE_MAX_CELLS))
     {
         return EXECUTE_TABLE_FULL;
     }
@@ -586,14 +738,19 @@ ExecuteResult execute_select(Statement *statement, Table *table)
     Row row;
     Cursor *cursor = get_start_of_table_cursor(table);
 
+    printf("hello 2.\n");
     // Up until the end_of_table variable is set to true
     while (!(cursor->end_of_table))
     {
+        printf("hello 2.\n");
         void *cursor_value = get_cursor_value(cursor);
 
+        printf("hello 2.\n");
         // Deserialize the row (convert a linear bite array into structured data). Copy the row data on the required memory offset
         deserialize_row(cursor_value, &row);
+        printf("hello 2.\n");
         print_row(&row);
+        printf("hello 2.\n");
         cursor_advance(cursor);
     }
     return EXECUTE_SUCCESS;
@@ -605,11 +762,14 @@ ExecuteResult execute_select(Statement *statement, Table *table)
  */
 ExecuteResult execute_statement(Statement *statement, Table *table)
 {
+
+    printf("hello 2.\n");
     switch (statement->type)
     {
     case (STATEMENT_INSERT):
         return execute_insert(statement, table);
     case (STATEMENT_SELECT):
+        printf("hello 2.\n");
         return execute_select(statement, table);
     }
 }
@@ -665,11 +825,11 @@ void print_constants()
 
 void print_leaf_node(void *node)
 {
-    uint32_t num_cells = *leaf_node_num_cells(node);
+    uint32_t num_cells = leaf_node_num_cells(node);
     printf("leaf (size %d)\n", num_cells);
     for (uint32_t i = 0; i < num_cells; i++)
     {
-        uint32_t key = *leaf_node_key(node, i);
+        uint32_t key = leaf_node_key(node, i);
         printf("  - %d : %d\n", i, key);
     }
 }
@@ -711,62 +871,6 @@ void deserialize_row(void *row_source, Row *destination)
     memcpy(&(destination->username), row_source + USERNAME_OFFSET, USERNAME_SIZE);
     memcpy(&(destination->email), row_source + EMAIL_OFFSET, EMAIL_SIZE);
 }
-
-/**
- * Returns a pointer to the number of cells in the leaf node.
- * This function calculates the location of the cell count within the leaf node header
- * and returns a pointer to it. This allows direct modification of the cell count.
- *
- * @param node Pointer to the start of a leaf node in memory.
- * @return Pointer to the number of cells (uint32_t) in the leaf node.
- */
-uint32_t *leaf_node_num_cells(void *node)
-{
-    return (uint32_t *)(node + LEAF_NODE_NUM_CELLS_OFFSET);
-}
-
-/**
- * Retrieves a pointer to the specific cell within a leaf node.
- * Cells are key/value pairs stored sequentially in the leaf node body.
- * This function calculates the start address of a specified cell based on its index.
- *
- * @param node Pointer to the start of the leaf node.
- * @param cell_num Index of the cell to access.
- * @return Pointer to the start of the specified cell.
- */
-void *leaf_node_cell(void *node, uint32_t cell_num)
-{
-    return (void *)(node + LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE);
-}
-
-/**
- * Retrieves a pointer to the key part of a specific cell in a leaf node.
- * This function reuses leaf_node_cell to find the cell and then returns its starting point,
- * as the key is the first part of a cell.
- *
- * @param node Pointer to the start of the leaf node.
- * @param cell_num Index of the cell whose key is to be accessed.
- * @return Pointer to the key (uint32_t) within the specified cell.
- */
-uint32_t *leaf_node_key(void *node, uint32_t cell_num)
-{
-    return leaf_node_cell(node, cell_num);
-}
-
-/**
- * Retrieves a pointer to the value part of a specific cell in a leaf node.
- * Since values follow keys within the cell structure, this function calculates the
- * address by moving past the key portion.
- *
- * @param node Pointer to the start of the leaf node.
- * @param cell_num Index of the cell whose value is to be accessed.
- * @return Pointer to the value part within the specified cell.
- */
-void *leaf_node_value(void *node, uint32_t cell_num)
-{
-    return leaf_node_cell(node, cell_num) + LEAF_NODE_KEY_SIZE;
-}
-
 /**
  * Initializes a leaf node by setting its cell count to zero.
  * This function is typically used when a new leaf node is created to ensure it
@@ -818,13 +922,14 @@ int main(int argc, char *argv[])
     char *filename = argv[1];
 
     Table *table = db_open(filename);
-
+    printf("Before input buffer.\n");
     InputBuffer *input_buffer = new_input_buffer();
 
     while (true)
     {
         print_prompt();
         read_input(input_buffer);
+        printf("hello.\n");
         if (input_buffer->buffer[0] == '.')
         {
             switch (do_meta_command(input_buffer, table))
@@ -840,6 +945,7 @@ int main(int argc, char *argv[])
         Statement statement;
         PrepareResult prepare_result = prepare_statement(input_buffer, &statement);
 
+        printf("hello 1.\n");
         switch (prepare_result)
         {
         case (PREPARE_SUCCESS):
@@ -860,6 +966,7 @@ int main(int argc, char *argv[])
         }
 
         ExecuteResult execute_result = execute_statement(&statement, table);
+        printf("hello 2.\n");
 
         switch (execute_result)
         {
