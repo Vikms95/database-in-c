@@ -7,7 +7,7 @@
 // do not understand why sometimes values (like Statement on main function) are being passed as &statement as sometimes without &
 // difference between variable->value.id and variable.value or variable->value.value
 
-// NEXT: Allocating New Pages
+// NEXT: Recursively searching the B-tree
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -221,9 +221,52 @@ void debug_cursor(Cursor *cursor)
     printf("    num_pages: %u\n", cursor->table->pager->num_pages);
 }
 
+/**
+ * Returns a pointer to the number of cells in the leaf node.
+ * This function calculates the location of the cell count within the leaf node header
+ * and returns a pointer to it. This allows direct modification of the cell count.
+ *
+ * @param node Pointer to the start of a leaf node in memory.
+ * @return Pointer to the number of cells (uint32_t) in the leaf node.
+ */
+uint32_t *leaf_node_num_cells(void *node)
+{
+    return (node + LEAF_NODE_NUM_CELLS_OFFSET);
+}
+
+NodeType get_node_type(void *node)
+{
+    uint32_t value = *((uint8_t *)(node + NODE_TYPE_OFFSET));
+    return (NodeType)value;
+}
 uint32_t *internal_node_num_keys(void *node)
 {
     return node + INTERNAL_NODE_NUM_KEYS_OFFSET;
+}
+
+/**
+ * Retrieves a pointer to the specific cell within a leaf node.
+ * Cells are key/value pairs stored sequentially in the leaf node body.
+ * This function calculates the start address of a specified cell based on its index.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell to access.
+ * @return Pointer to the start of the specified cell.
+ */
+void *leaf_node_cell(void *node, uint32_t cell_num)
+{
+    printf("Lead node cell.\n");
+    printf("node address: %p\n", node);
+    printf("cell_num: %u\n", cell_num);
+
+    // Calculate the offset
+    uint32_t offset = LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE;
+    printf("Calculated offset: %u\n", offset);
+
+    // Calculate the cell address
+    void *cell_address = (uint8_t *)node + offset; // Cast to uint8_t* for pointer arithmetic
+    printf("Calculated cell address: %p\n", cell_address);
+    return node + LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE;
 }
 
 uint32_t *internal_node_right_child(void *node)
@@ -236,6 +279,19 @@ uint32_t get_unused_page_num(Pager *pager)
     return pager->num_pages;
 }
 
+/**
+ * Retrieves a pointer to the key part of a specific cell in a leaf node.
+ * This function reuses leaf_node_cell to find the cell and then returns its starting point,
+ * as the key is the first part of a cell.
+ *
+ * @param node Pointer to the start of the leaf node.
+ * @param cell_num Index of the cell whose key is to be accessed.
+ * @return Pointer to the key (uint32_t) within the specified cell.
+ */
+uint32_t *leaf_node_key(void *node, uint32_t cell_num)
+{
+    return leaf_node_cell(node, cell_num);
+}
 uint32_t *internal_node_cell(void *node, uint32_t cell_num)
 {
     return node + INTERNAL_NODE_HEADER_SIZE + cell_num * INTERNAL_NODE_CELL_SIZE;
@@ -287,65 +343,6 @@ bool set_node_root(void *node, bool is_root)
     *((uint8_t *)(node + IS_ROOT_OFFSET)) = value;
 }
 
-void create_new_root(Table *table, uint32_t right_child_page_num)
-{
-    void *root = get_page(table->pager, table->root_page_num);
-    void *right_child = get_page(table->pager, right_child_page_num);
-    uint32_t left_child_page_num = get_unused_page_num(table->pager);
-    void *left_child = get_page(table->pager, left_child_page_num);
-
-    // Left child has data copied from old root
-    memcpy(left_child, root, PAGE_SIZE);
-    set_node_root(left_child, false);
-
-    // Root node is a new internal node with one key and two children
-    initialize_internal_node(root);
-    set_node_root(root, true);
-    *internal_node_num_keys(root) = 1;
-    *internal_node_child(root, 0) = left_child_page_num;
-    uint32_t left_child_max_key = get_node_max_key(left_child);
-    *internal_node_key(root, 0) = left_child_max_key;
-    *internal_node_right_child(root) = right_child_page_num;
-}
-
-/**
- * Retrieves a pointer to the specific cell within a leaf node.
- * Cells are key/value pairs stored sequentially in the leaf node body.
- * This function calculates the start address of a specified cell based on its index.
- *
- * @param node Pointer to the start of the leaf node.
- * @param cell_num Index of the cell to access.
- * @return Pointer to the start of the specified cell.
- */
-void *leaf_node_cell(void *node, uint32_t cell_num)
-{
-    printf("Lead node cell.\n");
-    printf("node address: %p\n", node);
-    printf("cell_num: %u\n", cell_num);
-
-    // Calculate the offset
-    uint32_t offset = LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE;
-    printf("Calculated offset: %u\n", offset);
-
-    // Calculate the cell address
-    void *cell_address = (uint8_t *)node + offset; // Cast to uint8_t* for pointer arithmetic
-    printf("Calculated cell address: %p\n", cell_address);
-    return node + LEAF_NODE_HEADER_SIZE + cell_num * LEAF_NODE_CELL_SIZE;
-}
-
-/**
- * Retrieves a pointer to the key part of a specific cell in a leaf node.
- * This function reuses leaf_node_cell to find the cell and then returns its starting point,
- * as the key is the first part of a cell.
- *
- * @param node Pointer to the start of the leaf node.
- * @param cell_num Index of the cell whose key is to be accessed.
- * @return Pointer to the key (uint32_t) within the specified cell.
- */
-uint32_t *leaf_node_key(void *node, uint32_t cell_num)
-{
-    return leaf_node_cell(node, cell_num);
-}
 /*
  *Retrieves or creates a new page within the pager
  */
@@ -394,27 +391,30 @@ void *get_page(Pager *pager, uint32_t page_num)
     return pager->pages[page_num];
 }
 
-NodeType get_node_type(void *node)
+void create_new_root(Table *table, uint32_t right_child_page_num)
 {
-    uint32_t value = *((uint8_t *)(node + NODE_TYPE_OFFSET));
-    return (NodeType)value;
+    void *root = get_page(table->pager, table->root_page_num);
+    void *right_child = get_page(table->pager, right_child_page_num);
+    uint32_t left_child_page_num = get_unused_page_num(table->pager);
+    void *left_child = get_page(table->pager, left_child_page_num);
+
+    // Left child has data copied from old root
+    memcpy(left_child, root, PAGE_SIZE);
+    set_node_root(left_child, false);
+
+    // Root node is a new internal node with one key and two children
+    initialize_internal_node(root);
+    set_node_root(root, true);
+    *internal_node_num_keys(root) = 1;
+    *internal_node_child(root, 0) = left_child_page_num;
+    uint32_t left_child_max_key = get_node_max_key(left_child);
+    *internal_node_key(root, 0) = left_child_max_key;
+    *internal_node_right_child(root) = right_child_page_num;
 }
 void set_node_type(void *node, NodeType type)
 {
     uint8_t value = type;
     *((uint8_t *)(node + NODE_TYPE_OFFSET)) = value;
-}
-/**
- * Returns a pointer to the number of cells in the leaf node.
- * This function calculates the location of the cell count within the leaf node header
- * and returns a pointer to it. This allows direct modification of the cell count.
- *
- * @param node Pointer to the start of a leaf node in memory.
- * @return Pointer to the number of cells (uint32_t) in the leaf node.
- */
-uint32_t *leaf_node_num_cells(void *node)
-{
-    return (node + LEAF_NODE_NUM_CELLS_OFFSET);
 }
 
 Cursor *leaf_node_find(Table *table, uint32_t page_num, uint32_t key)
@@ -724,6 +724,7 @@ MetaCommandResult do_meta_command(InputBuffer *input_buffer, Table *table)
     else if (strcmp(input_buffer->buffer, ".btree") == 0)
     {
         print_tree(table->pager, 0, 0);
+
         return META_COMMAND_SUCCESS;
     }
     else if (strcmp(input_buffer->buffer, ".constants") == 0)
@@ -1054,7 +1055,7 @@ void leaf_node_split_and_insert(Cursor *cursor, uint32_t key, Row *value)
         {
             destination_node = old_node;
         }
-        uint32_t index_within_node = i % LEAF_NODE_SPLIT_COUNT;
+        uint32_t index_within_node = i % LEAF_NODE_LEFT_SPLIT_COUNT;
         void *destination = leaf_node_cell(destination_node, index_within_node);
         if (i == cursor->cell_num)
         {
