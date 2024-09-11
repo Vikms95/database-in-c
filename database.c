@@ -391,6 +391,18 @@ void *get_page(Pager *pager, uint32_t page_num)
     return pager->pages[page_num];
 }
 
+void set_node_type(void *node, NodeType type)
+{
+    uint8_t value = type;
+    *((uint8_t *)(node + NODE_TYPE_OFFSET)) = value;
+}
+void initialize_internal_node(void *node)
+{
+    set_node_type(node, NODE_INTERNAL);
+    set_node_root(node, false);
+    *internal_node_num_keys(node) = 0;
+}
+
 void create_new_root(Table *table, uint32_t right_child_page_num)
 {
     void *root = get_page(table->pager, table->root_page_num);
@@ -410,11 +422,6 @@ void create_new_root(Table *table, uint32_t right_child_page_num)
     uint32_t left_child_max_key = get_node_max_key(left_child);
     *internal_node_key(root, 0) = left_child_max_key;
     *internal_node_right_child(root) = right_child_page_num;
-}
-void set_node_type(void *node, NodeType type)
-{
-    uint8_t value = type;
-    *((uint8_t *)(node + NODE_TYPE_OFFSET)) = value;
 }
 
 Cursor *leaf_node_find(Table *table, uint32_t page_num, uint32_t key)
@@ -687,6 +694,13 @@ Pager *pager_open(const char *filename)
     return pager;
 }
 
+void initialize_leaf_node(void *node)
+{
+    set_node_type(node, NODE_LEAF);
+    set_node_root(node, false);
+    *leaf_node_num_cells(node) = 0;
+}
+
 /*
  *Initialized the database by instantiating a pager and a single table (for now).
  *Later give a reference of the pager to the table itself. Returns a Table struct
@@ -709,7 +723,58 @@ Table *db_open(const char *filename)
     return table;
 }
 
-/*
+void indent(uint32_t level)
+{
+    for (uint32_t i = 0; i < level; i++)
+    {
+        printf("  ");
+    }
+}
+
+void print_tree(Pager *pager, uint32_t page_num, uint32_t indentation_level)
+{
+    void *node = get_page(pager, page_num);
+    uint32_t num_keys, child;
+
+    switch (get_node_type(node))
+    {
+    case (NODE_LEAF):
+        num_keys = *leaf_node_num_cells(node);
+        indent(indentation_level);
+        printf("- leaf (size %d)\n", num_keys);
+        for (uint32_t i = 0; i < num_keys; i++)
+        {
+            indent(indentation_level + 1);
+            printf("- %d\n", *leaf_node_key(node, i));
+        }
+        break;
+    case (NODE_INTERNAL):
+        num_keys = *internal_node_num_keys(node);
+        indent(indentation_level);
+        printf("- internal (size %d)\n", num_keys);
+        for (uint32_t i = 0; i < num_keys; i++)
+        {
+            child = *internal_node_child(node, i);
+            print_tree(pager, child, indentation_level + 1);
+            indent(indentation_level + 1);
+            printf("- key %d\n", *internal_node_key(node, i));
+        }
+        child = *internal_node_right_child(node);
+        print_tree(pager, child, indentation_level + 1);
+        break;
+    }
+}
+
+void print_constants()
+{
+    printf("ROW SIZE: %d\n", ROW_SIZE);
+    printf("COMMON_NODE_HEADER_SIZE: %d\n", COMMON_NODE_HEADER_SIZE);
+    printf("LEAF_NODE_HEADER_SIZE: %d\n", LEAF_NODE_HEADER_SIZE);
+    printf("LEAF_NODE_CELL_SIZE: %d\n", LEAF_NODE_CELL_SIZE);
+    printf("LEAF_NODE_SPACE_FOR_CELLS: %d\n", LEAF_NODE_SPACE_FOR_CELLS);
+    printf("LEAF_NODE_MAX_CELLS: %d\n", LEAF_NODE_MAX_CELLS);
+}
+/**
  * If the buffer started with a '.', execute one of the following meta commands. Returns
  * a value of the META_COMMAND enum to indicate the switch statement on the upper level on how to proceed.
  */
@@ -811,163 +876,8 @@ PrepareResult prepare_statement(InputBuffer *input_buffer, Statement *statement)
     }
     return PREPARE_UNRECOGNIZED_STATEMENT;
 }
-/*
- *
- */
-ExecuteResult execute_insert(Statement *statement, Table *table)
-{
-    void *node = get_page(table->pager, table->root_page_num);
-    uint32_t num_cells = (*leaf_node_num_cells(node));
-    if (num_cells >= LEAF_NODE_MAX_CELLS)
-    {
-        return EXECUTE_TABLE_FULL;
-    }
 
-    Row *row_to_insert = &(statement->row_to_insert);
-    uint32_t key_to_insert = row_to_insert->id;
-    Cursor *cursor = table_find(table, key_to_insert);
-
-    if (cursor->cell_num < num_cells)
-    {
-        uint32_t key_at_index = *leaf_node_key(node, cursor->cell_num);
-        if (key_at_index == key_to_insert)
-        {
-            return EXECUTE_DUPLICATE_KEY;
-        }
-    }
-    leaf_node_insert(cursor, row_to_insert->id, row_to_insert);
-    return EXECUTE_SUCCESS;
-}
-
-/*
- *
- */
-ExecuteResult execute_select(Statement *statement, Table *table)
-{
-    Row row;
-    Cursor *cursor = get_start_of_table_cursor(table);
-
-    // Up until the end_of_table variable is set to true
-    while (!(cursor->end_of_table))
-    {
-        void *cursor_value = get_cursor_value(cursor);
-
-        // Deserialize the row (convert a linear bite array into structured data). Copy the row data on the required memory offset
-        deserialize_row(cursor_value, &row);
-        print_row(&row);
-        cursor_advance(cursor);
-    }
-    return EXECUTE_SUCCESS;
-}
-
-/*
- * Switch statement that executes functions based on the statement type. Each function makes
- * this function return a value from the ExecuteResult
- */
-ExecuteResult execute_statement(Statement *statement, Table *table)
-{
-
-    switch (statement->type)
-    {
-    case (STATEMENT_INSERT):
-        return execute_insert(statement, table);
-    case (STATEMENT_SELECT):
-        return execute_select(statement, table);
-    }
-}
-
-/*
- * Reads standard CLI I/O to assign rthe necessary length of the buffer to the input_buffer object
- */
-void read_input(InputBuffer *input_buffer)
-{
-    ssize_t bytes_read =
-        getline(                            // Stdio C function to read data
-            &(input_buffer->buffer),        // Pointer to buffer where the read line will be stored
-            &(input_buffer->buffer_length), // Pointer to variable that hold the size of the buffer
-            stdin                           // The input stream to read from (cli stdin)
-        );
-
-    // If no bytes read, exit program with failure
-    if (bytes_read <= 0)
-    {
-        printf("Error reading input\n");
-        exit(EXIT_FAILURE);
-    }
-
-    // Assign number of bytes read to input_length
-    int buffer_to_assign = bytes_read - 1; // Ignore trailing newline (\n)(substract 1)
-    input_buffer->input_length = buffer_to_assign;
-    // Go up until wherever the buffer would reach and assign it to 0.
-    input_buffer->buffer[buffer_to_assign] = 0;
-}
-
-void close_input_buffer(InputBuffer *input_buffer)
-{
-    free(input_buffer->buffer);
-    free(input_buffer);
-}
-
-void print_prompt() { printf("db > "); }
-
-void print_row(Row *row)
-{
-    printf("(%d, %s, %s)\n", row->id, row->username, row->email);
-}
-
-void print_constants()
-{
-    printf("ROW SIZE: %d\n", ROW_SIZE);
-    printf("COMMON_NODE_HEADER_SIZE: %d\n", COMMON_NODE_HEADER_SIZE);
-    printf("LEAF_NODE_HEADER_SIZE: %d\n", LEAF_NODE_HEADER_SIZE);
-    printf("LEAF_NODE_CELL_SIZE: %d\n", LEAF_NODE_CELL_SIZE);
-    printf("LEAF_NODE_SPACE_FOR_CELLS: %d\n", LEAF_NODE_SPACE_FOR_CELLS);
-    printf("LEAF_NODE_MAX_CELLS: %d\n", LEAF_NODE_MAX_CELLS);
-}
-
-void indent(uint32_t level)
-{
-    for (uint32_t i = 0; i < level; i++)
-    {
-        printf("  ");
-    }
-}
-
-void print_tree(Pager *pager, uint32_t page_num, uint32_t indentation_level)
-{
-    void *node = get_page(pager, page_num);
-    uint32_t num_keys, child;
-
-    switch (get_node_type(node))
-    {
-    case (NODE_LEAF):
-        num_keys = *leaf_node_num_cells(node);
-        indent(indentation_level);
-        printf("- leaf (size %d)\n", num_keys);
-        for (uint32_t i = 0; i < num_keys; i++)
-        {
-            indent(indentation_level + 1);
-            printf("- %d\n", *leaf_node_key(node, i));
-        }
-        break;
-    case (NODE_INTERNAL):
-        num_keys = *internal_node_num_keys(node);
-        indent(indentation_level);
-        printf("- internal (size %d)\n", num_keys);
-        for (uint32_t i = 0; i < num_keys; i++)
-        {
-            child = *internal_node_child(node, i);
-            print_tree(pager, child, indentation_level + 1);
-            indent(indentation_level + 1);
-            printf("- key %d\n", *internal_node_key(node, i));
-        }
-        child = *internal_node_right_child(node);
-        print_tree(pager, child, indentation_level + 1);
-        break;
-    }
-}
-
-/*
+/**
  * Serializes a Row structure into a flat byte array.
  *
  * This function is used to convert the structured data within a Row structure
@@ -985,46 +895,6 @@ void serialize_row(Row *row_source, void *destination)
     memcpy(destination + USERNAME_OFFSET, &(row_source->username), USERNAME_SIZE);
     memcpy(destination + EMAIL_OFFSET, &(row_source->email), EMAIL_SIZE);
 }
-
-/*
- * Deserializes a flat byte array into a Row structure.
- *
- * This function is used to convert a contiguous block of memory (byte array)
- * back into a structured Row format. This is useful for loading data from disk
- * or network into a structured format that the application can manipulate.
- *
- *  Parameters:
- *   source - Pointer to the buffer containing serialized data.
- *   destination - Pointer to the Row structure where the deserialized data should be stored.
- */
-void deserialize_row(void *row_source, Row *destination)
-{
-    // Copy the ID field from the source array at the specified ID_OFFSET into the Row structure's ID field.
-    memcpy(&(destination->id), row_source + ID_OFFSET, ID_SIZE);
-    memcpy(&(destination->username), row_source + USERNAME_OFFSET, USERNAME_SIZE);
-    memcpy(&(destination->email), row_source + EMAIL_OFFSET, EMAIL_SIZE);
-}
-/**
- * Initializes a leaf node by setting its cell count to zero.
- * This function is typically used when a new leaf node is created to ensure it
- * is in a clean state with no cells stored in it.
- *
- * @param node Pointer to the start of the leaf node to initialize.
- */
-void initialize_leaf_node(void *node)
-{
-    set_node_type(node, NODE_LEAF);
-    set_node_root(node, false);
-    *leaf_node_num_cells(node) = 0;
-}
-
-void initialize_internal_node(void *node)
-{
-    set_node_type(node, NODE_INTERNAL);
-    set_node_root(node, false);
-    *internal_node_num_keys(node) = 0;
-}
-
 void leaf_node_split_and_insert(Cursor *cursor, uint32_t key, Row *value)
 {
     /*
@@ -1109,6 +979,130 @@ void leaf_node_insert(Cursor *cursor, uint32_t key, Row *value)
     *(leaf_node_key(node, cursor->cell_num)) = key;
     serialize_row(value, leaf_node_value(node, cursor->cell_num));
 }
+
+ExecuteResult execute_insert(Statement *statement, Table *table)
+{
+    void *node = get_page(table->pager, table->root_page_num);
+    uint32_t num_cells = (*leaf_node_num_cells(node));
+    if (num_cells >= LEAF_NODE_MAX_CELLS)
+    {
+        return EXECUTE_TABLE_FULL;
+    }
+
+    Row *row_to_insert = &(statement->row_to_insert);
+    uint32_t key_to_insert = row_to_insert->id;
+    Cursor *cursor = table_find(table, key_to_insert);
+
+    if (cursor->cell_num < num_cells)
+    {
+        uint32_t key_at_index = *leaf_node_key(node, cursor->cell_num);
+        if (key_at_index == key_to_insert)
+        {
+            return EXECUTE_DUPLICATE_KEY;
+        }
+    }
+    leaf_node_insert(cursor, row_to_insert->id, row_to_insert);
+    return EXECUTE_SUCCESS;
+}
+
+/**
+ * Deserializes a flat byte array into a Row structure.
+ *
+ * This function is used to convert a contiguous block of memory (byte array)
+ * back into a structured Row format. This is useful for loading data from disk
+ * or network into a structured format that the application can manipulate.
+ *
+ *  Parameters:
+ *   source - Pointer to the buffer containing serialized data.
+ *   destination - Pointer to the Row structure where the deserialized data should be stored.
+ */
+void deserialize_row(void *row_source, Row *destination)
+{
+    // Copy the ID field from the source array at the specified ID_OFFSET into the Row structure's ID field.
+    memcpy(&(destination->id), row_source + ID_OFFSET, ID_SIZE);
+    memcpy(&(destination->username), row_source + USERNAME_OFFSET, USERNAME_SIZE);
+    memcpy(&(destination->email), row_source + EMAIL_OFFSET, EMAIL_SIZE);
+}
+
+void print_row(Row *row)
+{
+    printf("(%d, %s, %s)\n", row->id, row->username, row->email);
+}
+ExecuteResult execute_select(Statement *statement, Table *table)
+{
+    Row row;
+    Cursor *cursor = get_start_of_table_cursor(table);
+
+    // Up until the end_of_table variable is set to true
+    while (!(cursor->end_of_table))
+    {
+        void *cursor_value = get_cursor_value(cursor);
+
+        // Deserialize the row (convert a linear bite array into structured data). Copy the row data on the required memory offset
+        deserialize_row(cursor_value, &row);
+        print_row(&row);
+        cursor_advance(cursor);
+    }
+    return EXECUTE_SUCCESS;
+}
+
+/*
+ * Switch statement that executes functions based on the statement type. Each function makes
+ * this function return a value from the ExecuteResult
+ */
+ExecuteResult execute_statement(Statement *statement, Table *table)
+{
+
+    switch (statement->type)
+    {
+    case (STATEMENT_INSERT):
+        return execute_insert(statement, table);
+    case (STATEMENT_SELECT):
+        return execute_select(statement, table);
+    }
+}
+
+/*
+ * Reads standard CLI I/O to assign rthe necessary length of the buffer to the input_buffer object
+ */
+void read_input(InputBuffer *input_buffer)
+{
+    ssize_t bytes_read =
+        getline(                            // Stdio C function to read data
+            &(input_buffer->buffer),        // Pointer to buffer where the read line will be stored
+            &(input_buffer->buffer_length), // Pointer to variable that hold the size of the buffer
+            stdin                           // The input stream to read from (cli stdin)
+        );
+
+    // If no bytes read, exit program with failure
+    if (bytes_read <= 0)
+    {
+        printf("Error reading input\n");
+        exit(EXIT_FAILURE);
+    }
+
+    // Assign number of bytes read to input_length
+    int buffer_to_assign = bytes_read - 1; // Ignore trailing newline (\n)(substract 1)
+    input_buffer->input_length = buffer_to_assign;
+    // Go up until wherever the buffer would reach and assign it to 0.
+    input_buffer->buffer[buffer_to_assign] = 0;
+}
+
+void close_input_buffer(InputBuffer *input_buffer)
+{
+    free(input_buffer->buffer);
+    free(input_buffer);
+}
+
+void print_prompt() { printf("db > "); }
+
+/**
+ * Initializes a leaf node by setting its cell count to zero.
+ * This function is typically used when a new leaf node is created to ensure it
+ * is in a clean state with no cells stored in it.
+ *
+ * @param node Pointer to the start of the leaf node to initialize.
+ */
 
 int main(int argc, char *argv[])
 {
